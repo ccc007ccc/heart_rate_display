@@ -27,7 +27,7 @@ class FloatingWindow:
         # Heart rate display label
         self.heart_rate_label = tk.Label(
             self.window,
-            text="心率: --",
+            text="❤️--",
             font=("Arial", 18, "bold"),
             bg="black",
         )
