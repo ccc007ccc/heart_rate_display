@@ -42,7 +42,7 @@ class HeartRateMonitor:
     def setup_ui(self):
         self.root = tk.Tk()
         self.root.title("心率监控器 - 游戏悬浮显示")
-        self.root.geometry("650x550")
+        self.root.geometry("650x650")
         self.root.resizable(True, True)
         
         # 创建主框架
