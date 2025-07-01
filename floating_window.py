@@ -1,7 +1,7 @@
 # floating_window.py
 
 import tkinter as tk
-import ctypes
+import sys
 
 class FloatingWindow:
     """悬浮窗类"""
@@ -18,13 +18,18 @@ class FloatingWindow:
         if self.window:
             return
             
-        self.window = tk.Toplevel()
+        # 修复 #1: 明确将悬浮窗与主窗口关联
+        self.window = tk.Toplevel(self.heart_rate_monitor.root)
         self.window.title("心率悬浮窗")
         self.window.geometry("150x60+100+100")
+        
+        # 使用无边框和置顶属性
+        self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
-        self.window.overrideredirect(True)  # 无边框
-        self.window.attributes("-transparentcolor", "black")
+        
+        # 设置窗口背景为透明
         self.window.configure(bg="black")
+        self.window.attributes("-transparentcolor", "black")
         
         # 心率显示标签
         self.heart_rate_label = tk.Label(
@@ -36,18 +41,19 @@ class FloatingWindow:
         )
         self.heart_rate_label.pack(expand=True, fill="both")
         
-        # 右键菜单
+        # 创建右键菜单
         self.create_context_menu()
         
         # 绑定拖拽事件
         self.bind_drag_events()
         
-        # 设置窗口穿透（默认不穿透，解锁状态）
-        self.set_click_through(False)
-        
         # 窗口关闭事件
         self.window.protocol("WM_DELETE_WINDOW", self.close_window)
         
+        # 初始化窗口为解锁状态（可点击）
+        # 在窗口创建后调用，确保句柄(hwnd)已生成
+        self.window.after(100, lambda: self.set_click_through(False))
+
     def create_context_menu(self):
         """创建右键菜单"""
         self.context_menu = tk.Menu(self.window, tearoff=0)
@@ -79,7 +85,6 @@ class FloatingWindow:
                     y = self.window.winfo_y() + event.y - self.start_y
                     self.window.geometry(f"+{x}+{y}")
                 except tk.TclError:
-                    # 防止窗口已被销毁但事件仍在触发的情况
                     self.dragging = False
                 
         def stop_drag(event):
@@ -90,33 +95,39 @@ class FloatingWindow:
         self.heart_rate_label.bind("<ButtonRelease-1>", stop_drag)
         
     def set_click_through(self, enable):
-        """设置点击穿透"""
+        """设置点击穿透 (仅Windows)"""
+        # 修复 #2: 彻底重构此函数以避免与Tkinter冲突
         if not self.window:
             return
             
+        if sys.platform != "win32":
+            if enable:
+                self.heart_rate_monitor.log_message("警告: 点击穿透功能仅在Windows上受支持。")
+            return
+
         try:
-            hwnd = self.window.winfo_id()
+            import ctypes
             
-            # Windows API常量
             GWL_EXSTYLE = -20
             WS_EX_LAYERED = 0x80000
             WS_EX_TRANSPARENT = 0x20
-            WS_EX_TOPMOST = 0x8
             
-            # 获取当前窗口样式
+            hwnd = self.window.winfo_id()
             current_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             
             if enable:
-                # 启用穿透
-                new_style = current_style | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST
+                # 启用穿透 (添加 WS_EX_TRANSPARENT 样式)
+                new_style = current_style | WS_EX_TRANSPARENT
             else:
-                # 禁用穿透
-                new_style = current_style | WS_EX_LAYERED | WS_EX_TOPMOST
-                new_style = new_style & ~WS_EX_TRANSPARENT
-                
+                # 禁用穿透 (移除 WS_EX_TRANSPARENT 样式)
+                new_style = current_style & ~WS_EX_TRANSPARENT
+            
             ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_style)
+            # 确保窗口更新其样式
+            ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, 255, 0x2)
+
         except Exception as e:
-            print(f"设置点击穿透失败: {e}")
+            self.heart_rate_monitor.log_message(f"设置点击穿透失败: {e}")
             
     def toggle_lock(self):
         """切换锁定状态"""
