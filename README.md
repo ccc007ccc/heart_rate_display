@@ -2,7 +2,7 @@
 
 This is a heart rate monitoring application with a floating window that displays real-time heart rate data. It is especially useful during gaming or other full-screen activities. *(Tested only on Xiaomi Band 10)*
 
-🌍 [English](./README.md) | **Simplified Chinese**
+🌍 **English** | [简体中文](./README_zh-CN.md)
 
 ## Features
 
