@@ -3,7 +3,7 @@
 import asyncio
 import threading
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import ttk, scrolledtext, messagebox, colorchooser
 import sys
 import queue
 from datetime import datetime
@@ -38,7 +38,7 @@ class HeartRateMonitor:
     def setup_ui(self):
         self.root = tk.Tk()
         self.root.title("心率监控器 - 游戏悬浮显示")
-        self.root.geometry("650x650")
+        self.root.geometry("650x750") # Increased height for the new frame
         self.root.resizable(True, True)
         
         main_frame = ttk.Frame(self.root, padding="10")
@@ -47,7 +47,7 @@ class HeartRateMonitor:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(4, weight=1)
+        main_frame.rowconfigure(5, weight=1) # Changed from 4 to 5
         
         heart_rate_frame = ttk.LabelFrame(main_frame, text="心率监控", padding="10")
         heart_rate_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
@@ -90,7 +90,7 @@ class HeartRateMonitor:
         floating_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         floating_frame.columnconfigure(0, weight=1)
         floating_frame.columnconfigure(1, weight=1)
-        floating_frame.columnconfigure(2, weight=1) # 为保存按钮增加列
+        floating_frame.columnconfigure(2, weight=1) 
         
         self.show_floating_button = ttk.Button(floating_frame, text="显示悬浮窗", command=self.toggle_floating_window)
         self.show_floating_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
@@ -98,21 +98,37 @@ class HeartRateMonitor:
         self.lock_button = ttk.Button(floating_frame, text="锁定悬浮窗", command=self.toggle_floating_lock, state=tk.DISABLED)
         self.lock_button.grid(row=0, column=1, padx=(5, 0), sticky="ew")
 
-        # 新增：保存设置按钮
         self.save_button = ttk.Button(floating_frame, text="保存设置", command=self.save_settings)
         self.save_button.grid(row=0, column=2, padx=(5, 0), sticky="ew")
         
         info_text = """使用说明:
 1. 扫描并连接心率设备
 2. 点击"显示悬浮窗"在屏幕上显示心率
-3. 点击"保存设置"或关闭程序时会自动保存悬浮窗状态
-4. 悬浮窗解锁时(绿色)可拖拽移动，锁定后(橙色)穿透点击"""
+3. 悬浮窗解锁时(默认绿色)可拖拽移动，锁定后(默认橙色)穿透点击
+4. 点击"保存设置"或关闭程序时会自动保存所有设置"""
         
         info_label = tk.Label(floating_frame, text=info_text, justify=tk.LEFT, font=("Arial", 9))
         info_label.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+
+        # --- NEW: Color Settings Frame ---
+        color_frame = ttk.LabelFrame(main_frame, text="悬浮窗颜色设置", padding="10")
+        color_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        color_frame.columnconfigure(2, weight=1)
+
+        # Unlocked Color
+        ttk.Label(color_frame, text="解锁时 (可拖动):").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        self.unlocked_color_preview = tk.Label(color_frame, text="    ", bg=self.floating_window.unlocked_color)
+        self.unlocked_color_preview.grid(row=0, column=1, sticky=tk.W)
+        ttk.Button(color_frame, text="选择颜色...", command=self.choose_unlocked_color).grid(row=0, column=2, padx=5, sticky=tk.E)
+
+        # Locked Color
+        ttk.Label(color_frame, text="锁定时 (穿透点击):").grid(row=1, column=0, sticky=tk.W, pady=(5, 0), padx=(0, 10))
+        self.locked_color_preview = tk.Label(color_frame, text="    ", bg=self.floating_window.locked_color)
+        self.locked_color_preview.grid(row=1, column=1, pady=(5, 0), sticky=tk.W)
+        ttk.Button(color_frame, text="选择颜色...", command=self.choose_locked_color).grid(row=1, column=2, padx=5, pady=(5, 0), sticky=tk.E)
         
         log_frame = ttk.LabelFrame(main_frame, text="日志", padding="10")
-        log_frame.grid(row=4, column=0, columnspan=2, sticky="nsew")
+        log_frame.grid(row=5, column=0, columnspan=2, sticky="nsew") # Changed from 4 to 5
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         
@@ -120,6 +136,28 @@ class HeartRateMonitor:
         self.log_text.grid(row=0, column=0, sticky="nsew")
         
         ttk.Button(log_frame, text="清除日志", command=self.clear_logs).grid(row=1, column=0, pady=(5, 0), sticky=tk.E)
+
+    def choose_unlocked_color(self):
+        """Opens a color chooser for the unlocked floating window font color."""
+        color_code = colorchooser.askcolor(title="选择解锁时的字体颜色", initialcolor=self.floating_window.unlocked_color)
+        if color_code and color_code[1]:
+            color = color_code[1]
+            self.floating_window.unlocked_color = color
+            self.unlocked_color_preview.config(bg=color)
+            if self.floating_window.is_open() and not self.floating_window.is_locked():
+                self.floating_window.apply_lock_state()
+            self.log_message(f"设置解锁颜色为: {color}")
+
+    def choose_locked_color(self):
+        """Opens a color chooser for the locked floating window font color."""
+        color_code = colorchooser.askcolor(title="选择锁定时的字体颜色", initialcolor=self.floating_window.locked_color)
+        if color_code and color_code[1]:
+            color = color_code[1]
+            self.floating_window.locked_color = color
+            self.locked_color_preview.config(bg=color)
+            if self.floating_window.is_open() and self.floating_window.is_locked():
+                self.floating_window.apply_lock_state()
+            self.log_message(f"设置锁定颜色为: {color}")
 
     def log_message(self, message):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -159,7 +197,7 @@ class HeartRateMonitor:
             if self.floating_window.window is not None:
                 geometry = self.floating_window.window.geometry()
             else:
-                geometry = self.floating_window.last_geometry  # 或使用默认值如 "200x80+100+100"`
+                geometry = self.floating_window.last_geometry
             
         config = {
             "mac": self.current_mac,
@@ -167,6 +205,8 @@ class HeartRateMonitor:
                 "visible": self.floating_window.is_open(),
                 "locked": self.floating_window.is_locked(),
                 "geometry": geometry,
+                "unlocked_color": self.floating_window.unlocked_color,
+                "locked_color": self.floating_window.locked_color,
             }
         }
         save_config(config)
@@ -179,7 +219,6 @@ class HeartRateMonitor:
             self.log_message("未找到配置文件，使用默认设置。")
             return
 
-        # 加载MAC地址
         mac = config.get("mac")
         if mac:
             self.current_mac = mac
@@ -187,19 +226,23 @@ class HeartRateMonitor:
             self.connect_button.config(state=tk.NORMAL)
             self.log_message(f"从配置文件加载设备: {mac}")
 
-        # 加载窗口设置
         window_settings = config.get("window")
         if window_settings:
             self.log_message("正在加载悬浮窗设置...")
             
-            # 如果之前是可见的，则恢复窗口
+            unlocked_color = window_settings.get("unlocked_color", "#00FF00")
+            locked_color = window_settings.get("locked_color", "#FF6600")
+            self.floating_window.unlocked_color = unlocked_color
+            self.floating_window.locked_color = locked_color
+            self.unlocked_color_preview.config(bg=unlocked_color)
+            self.locked_color_preview.config(bg=locked_color)
+            self.log_message(f"加载颜色: 解锁={unlocked_color}, 锁定={locked_color}")
+            
             if window_settings.get("visible", False):
                 self.floating_window.last_geometry = window_settings.get("geometry", "200x80+100+100")
                 self.toggle_floating_window() 
                 
-                # 恢复锁定状态
                 if window_settings.get("locked", False):
-                    # 等待窗口创建完毕再锁定
                     self.root.after(100, self.toggle_floating_lock)
 
     def toggle_floating_window(self):
@@ -227,10 +270,7 @@ class HeartRateMonitor:
     def on_closing(self):
         """主窗口关闭事件"""
         self.log_message("正在关闭程序...")
-        
-        # 新增：关闭时自动保存设置
         self.save_settings()
-        
         self.should_stop = True
         if self.connected:
             self.disconnect_device()
@@ -298,7 +338,6 @@ class HeartRateMonitor:
                 self.current_mac = selected_device.address
                 self.device_label.config(text=f"MAC: {selected_device.address}")
                 self.connect_button.config(state=tk.NORMAL)
-                # 修改为只在内存中更新MAC，等待用户点击保存
                 self.log_message(f"选择设备: {selected_device.name or '未知'} ({selected_device.address})")
                 selection_window.destroy()
             else:

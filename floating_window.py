@@ -14,6 +14,8 @@ class FloatingWindow:
         self.start_x = 0
         self.start_y = 0
         self.last_geometry = "200x80+100+100" # Initial size and position
+        self.unlocked_color = "#00FF00"  # Default color for unlocked state
+        self.locked_color = "#FF6600"    # Default color for locked state
 
     def create_window(self):
         """创建悬浮窗"""
@@ -123,17 +125,15 @@ class FloatingWindow:
             self.window.attributes("-topmost", True)
             self.window.configure(bg="black")
             self.window.attributes("-transparentcolor", "black")
-            self.heart_rate_label.config(fg="#FF6600")  # 橙色表示锁定
-            self.heart_rate_monitor.log_message("悬浮窗已锁定 - 橙色显示")
-            self.locked = True
+            self.heart_rate_label.config(fg=self.locked_color)
+            self.heart_rate_monitor.log_message(f"悬浮窗已锁定 - {self.locked_color} 显示")
         else:
             self.window.overrideredirect(False)
             self.window.attributes("-topmost", False)
             self.window.configure(bg="black")
             self.window.attributes("-transparentcolor", "")
-            self.heart_rate_label.config(fg="#00FF00")  # 绿色表示解锁
-            self.heart_rate_monitor.log_message("悬浮窗已解锁 - 绿色显示")
-            self.locked = False
+            self.heart_rate_label.config(fg=self.unlocked_color)
+            self.heart_rate_monitor.log_message(f"悬浮窗已解锁 - {self.unlocked_color} 显示")
 
     def toggle_lock(self):
         """切换锁定状态"""
