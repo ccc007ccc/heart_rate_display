@@ -235,7 +235,7 @@ class HeartRateMonitor:
         """切换悬浮窗锁定状态"""
         if self.floating_window.is_open():
             self.floating_window.toggle_lock()
-            if self.floating_window.locked:
+            if self.floating_window.is_locked():
                 self.lock_button.config(text="解锁悬浮窗")
             else:
                 self.lock_button.config(text="锁定悬浮窗")
@@ -243,7 +243,7 @@ class HeartRateMonitor:
     def floating_window_closed(self):
         """悬浮窗关闭回调"""
         self.show_floating_button.config(text="显示悬浮窗")
-        self.lock_button.config(state=tk.DISABLED, text="锁定悬浮窗")
+        self.lock_button.config(state=tk.DISABLED)
         self.log_message("悬浮窗已关闭")
 
     def scan_devices(self):
