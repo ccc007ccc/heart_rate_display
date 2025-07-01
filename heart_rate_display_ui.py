@@ -9,8 +9,9 @@ import queue
 from datetime import datetime
 
 from get_heart_rate.heart_rate_tool import get_heart_rate, scan_and_select_device
-from config import save_config, load_config  # 更新导入
+from config import save_config, load_config
 from floating_window import FloatingWindow
+from vrc_osc import VrcOscClient
 
 class HeartRateMonitor:
     def __init__(self):
@@ -25,6 +26,10 @@ class HeartRateMonitor:
         self.floating_window = FloatingWindow(self)
         
         self.log_queue = queue.Queue()
+        # UPDATED: 在初始化OSC客户端时传入日志方法
+        self.vrc_osc_client = VrcOscClient(self.log_message)
+        self.vrc_connected = False
+        
         self.heart_rate_queue = queue.Queue()
         
         self.setup_ui()
@@ -32,13 +37,12 @@ class HeartRateMonitor:
         self.update_logs()
         self.update_heart_rate_display()
         
-        # 加载所有保存的设置
         self.load_settings()
 
     def setup_ui(self):
         self.root = tk.Tk()
         self.root.title("心率监控器 - 游戏悬浮显示")
-        self.root.geometry("650x750") # Increased height for the new frame
+        self.root.geometry("650x850")
         self.root.resizable(True, True)
         
         main_frame = ttk.Frame(self.root, padding="10")
@@ -47,20 +51,16 @@ class HeartRateMonitor:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(5, weight=1) # Changed from 4 to 5
+        main_frame.rowconfigure(6, weight=1)
         
         heart_rate_frame = ttk.LabelFrame(main_frame, text="心率监控", padding="10")
         heart_rate_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         heart_rate_frame.columnconfigure(0, weight=1)
         
-        self.heart_rate_label = tk.Label(
-            heart_rate_frame, text="心率: --", font=("Arial", 32, "bold"), fg="red"
-        )
+        self.heart_rate_label = tk.Label(heart_rate_frame, text="心率: --", font=("Arial", 32, "bold"), fg="red")
         self.heart_rate_label.grid(row=0, column=0)
         
-        self.status_label = tk.Label(
-            heart_rate_frame, text="状态: 未连接", font=("Arial", 12), fg="gray"
-        )
+        self.status_label = tk.Label(heart_rate_frame, text="状态: 未连接", font=("Arial", 12), fg="gray")
         self.status_label.grid(row=1, column=0, pady=(5, 0))
         
         device_frame = ttk.LabelFrame(main_frame, text="设备信息", padding="10")
@@ -101,34 +101,40 @@ class HeartRateMonitor:
         self.save_button = ttk.Button(floating_frame, text="保存设置", command=self.save_settings)
         self.save_button.grid(row=0, column=2, padx=(5, 0), sticky="ew")
         
-        info_text = """使用说明:
-1. 扫描并连接心率设备
-2. 点击"显示悬浮窗"在屏幕上显示心率
-3. 悬浮窗解锁时(默认绿色)可拖拽移动，锁定后(默认橙色)穿透点击
-4. 点击"保存设置"或关闭程序时会自动保存所有设置"""
-        
-        info_label = tk.Label(floating_frame, text=info_text, justify=tk.LEFT, font=("Arial", 9))
-        info_label.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        vrc_frame = ttk.LabelFrame(main_frame, text="VRChat OSC 同步", padding="10")
+        vrc_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        vrc_frame.columnconfigure(1, weight=1)
 
-        # --- NEW: Color Settings Frame ---
+        ttk.Label(vrc_frame, text="IP 地址:").grid(row=0, column=0, sticky=tk.W)
+        self.vrc_ip_var = tk.StringVar(value="127.0.0.1")
+        ttk.Entry(vrc_frame, textvariable=self.vrc_ip_var).grid(row=0, column=1, sticky="ew", padx=5)
+
+        ttk.Label(vrc_frame, text="端口:").grid(row=1, column=0, sticky=tk.W, pady=(5,0))
+        self.vrc_port_var = tk.StringVar(value="9000")
+        ttk.Entry(vrc_frame, textvariable=self.vrc_port_var).grid(row=1, column=1, sticky="ew", padx=5, pady=(5,0))
+
+        self.vrc_connect_button = ttk.Button(vrc_frame, text="连接 OSC", command=self.toggle_vrc_connection)
+        self.vrc_connect_button.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10,0))
+        
+        self.vrc_status_label = ttk.Label(vrc_frame, text="状态: 未连接", font=("Arial", 10), foreground="gray")
+        self.vrc_status_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(5,0))
+        
         color_frame = ttk.LabelFrame(main_frame, text="悬浮窗颜色设置", padding="10")
-        color_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        color_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         color_frame.columnconfigure(2, weight=1)
 
-        # Unlocked Color
         ttk.Label(color_frame, text="解锁时 (可拖动):").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
         self.unlocked_color_preview = tk.Label(color_frame, text="    ", bg=self.floating_window.unlocked_color)
         self.unlocked_color_preview.grid(row=0, column=1, sticky=tk.W)
         ttk.Button(color_frame, text="选择颜色...", command=self.choose_unlocked_color).grid(row=0, column=2, padx=5, sticky=tk.E)
 
-        # Locked Color
         ttk.Label(color_frame, text="锁定时 (穿透点击):").grid(row=1, column=0, sticky=tk.W, pady=(5, 0), padx=(0, 10))
         self.locked_color_preview = tk.Label(color_frame, text="    ", bg=self.floating_window.locked_color)
         self.locked_color_preview.grid(row=1, column=1, pady=(5, 0), sticky=tk.W)
         ttk.Button(color_frame, text="选择颜色...", command=self.choose_locked_color).grid(row=1, column=2, padx=5, pady=(5, 0), sticky=tk.E)
         
         log_frame = ttk.LabelFrame(main_frame, text="日志", padding="10")
-        log_frame.grid(row=5, column=0, columnspan=2, sticky="nsew") # Changed from 4 to 5
+        log_frame.grid(row=6, column=0, columnspan=2, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         
@@ -138,7 +144,6 @@ class HeartRateMonitor:
         ttk.Button(log_frame, text="清除日志", command=self.clear_logs).grid(row=1, column=0, pady=(5, 0), sticky=tk.E)
 
     def choose_unlocked_color(self):
-        """Opens a color chooser for the unlocked floating window font color."""
         color_code = colorchooser.askcolor(title="选择解锁时的字体颜色", initialcolor=self.floating_window.unlocked_color)
         if color_code and color_code[1]:
             color = color_code[1]
@@ -149,7 +154,6 @@ class HeartRateMonitor:
             self.log_message(f"设置解锁颜色为: {color}")
 
     def choose_locked_color(self):
-        """Opens a color chooser for the locked floating window font color."""
         color_code = colorchooser.askcolor(title="选择锁定时的字体颜色", initialcolor=self.floating_window.locked_color)
         if color_code and color_code[1]:
             color = color_code[1]
@@ -179,8 +183,12 @@ class HeartRateMonitor:
                 heart_rate = self.heart_rate_queue.get_nowait()
                 self.heart_rate = heart_rate
                 self.heart_rate_label.config(text=f"心率: {heart_rate}")
-                if heart_rate > 0: self.heart_rate_label.config(fg="green")
-                else: self.heart_rate_label.config(fg="red")
+                if heart_rate > 0:
+                    self.heart_rate_label.config(fg="green")
+                    if self.vrc_connected:
+                        self.vrc_osc_client.send_heart_rate(heart_rate)
+                else:
+                    self.heart_rate_label.config(fg="red")
                 if self.floating_window.is_open():
                     self.floating_window.update_heart_rate(heart_rate)
         except queue.Empty:
@@ -191,7 +199,6 @@ class HeartRateMonitor:
         self.log_text.delete(1.0, tk.END)
 
     def save_settings(self):
-        """收集当前设置并保存到文件"""
         geometry = self.floating_window.last_geometry
         if self.floating_window.is_open():
             if self.floating_window.window is not None:
@@ -207,13 +214,16 @@ class HeartRateMonitor:
                 "geometry": geometry,
                 "unlocked_color": self.floating_window.unlocked_color,
                 "locked_color": self.floating_window.locked_color,
+            },
+            "vrc_osc": {
+                "ip": self.vrc_ip_var.get(),
+                "port": self.vrc_port_var.get()
             }
         }
         save_config(config)
         self.log_message("设置已保存到 config.json")
 
     def load_settings(self):
-        """从配置文件加载所有设置"""
         config = load_config()
         if not config:
             self.log_message("未找到配置文件，使用默认设置。")
@@ -229,14 +239,12 @@ class HeartRateMonitor:
         window_settings = config.get("window")
         if window_settings:
             self.log_message("正在加载悬浮窗设置...")
-            
             unlocked_color = window_settings.get("unlocked_color", "#00FF00")
             locked_color = window_settings.get("locked_color", "#FF6600")
             self.floating_window.unlocked_color = unlocked_color
             self.floating_window.locked_color = locked_color
             self.unlocked_color_preview.config(bg=unlocked_color)
             self.locked_color_preview.config(bg=locked_color)
-            self.log_message(f"加载颜色: 解锁={unlocked_color}, 锁定={locked_color}")
             
             if window_settings.get("visible", False):
                 self.floating_window.last_geometry = window_settings.get("geometry", "200x80+100+100")
@@ -244,6 +252,43 @@ class HeartRateMonitor:
                 
                 if window_settings.get("locked", False):
                     self.root.after(100, self.toggle_floating_lock)
+        
+        vrc_settings = config.get("vrc_osc")
+        if vrc_settings:
+            self.vrc_ip_var.set(vrc_settings.get("ip", "127.0.0.1"))
+            self.vrc_port_var.set(vrc_settings.get("port", "9000"))
+            self.log_message("已加载 VRChat OSC 设置")
+
+    def toggle_vrc_connection(self):
+        if self.vrc_connected:
+            self.vrc_osc_client.disconnect()
+            self.vrc_connected = False
+            self.vrc_connect_button.config(text="连接 OSC")
+            self.vrc_status_label.config(text="状态: 未连接", foreground="gray")
+            self.log_message("VRChat OSC 已断开")
+        else:
+            ip = self.vrc_ip_var.get()
+            port_str = self.vrc_port_var.get()
+            if not ip or not port_str:
+                messagebox.showerror("OSC 错误", "IP地址和端口不能为空")
+                return
+            try:
+                port = int(port_str)
+                success, message = self.vrc_osc_client.connect(ip, port)
+                if success:
+                    self.vrc_connected = True
+                    self.vrc_connect_button.config(text="断开 OSC")
+                    self.vrc_status_label.config(text=f"状态: 已连接到 {ip}:{port}", foreground="green")
+                    self.log_message(message)
+                else:
+                    messagebox.showerror("OSC 连接失败", message)
+                    self.log_message(f"OSC 连接失败: {message}")
+            except ValueError:
+                messagebox.showerror("OSC 错误", "端口号必须是有效的数字")
+                self.log_message("OSC 连接失败: 端口号无效")
+            except Exception as e:
+                messagebox.showerror("OSC 连接失败", str(e))
+                self.log_message(f"OSC 连接失败: {e}")
 
     def toggle_floating_window(self):
         if self.floating_window.is_open():
@@ -268,12 +313,14 @@ class HeartRateMonitor:
         self.log_message("悬浮窗已关闭")
 
     def on_closing(self):
-        """主窗口关闭事件"""
         self.log_message("正在关闭程序...")
         self.save_settings()
         self.should_stop = True
         if self.connected:
             self.disconnect_device()
+        
+        if self.vrc_connected:
+            self.vrc_osc_client.disconnect()
         
         if self.floating_window.is_open():
             self.floating_window.close_window()
@@ -415,10 +462,7 @@ class HeartRateMonitor:
                 raise Exception("未找到心率特征")
 
     async def _find_heart_rate_characteristics(self, client):
-        uuid_map = {
-            "service": "0000180d-0000-1000-8000-00805f9b34fb",
-            "measurement": "00002a37-0000-1000-8000-00805f9b34fb"
-        }
+        uuid_map = { "service": "0000180d-0000-1000-8000-00805f9b34fb", "measurement": "00002a37-0000-1000-8000-00805f9b34fb" }
         for service in client.services:
             if service.uuid.lower() == uuid_map["service"]:
                 for char in service.characteristics:
