@@ -12,6 +12,7 @@ from get_heart_rate.heart_rate_tool import get_heart_rate, scan_and_select_devic
 from config import save_config, load_config
 from floating_window import FloatingWindow
 from vrc_osc import VrcOscClient
+from api_server import ApiServer
 
 class HeartRateMonitor:
     def __init__(self):
@@ -23,10 +24,13 @@ class HeartRateMonitor:
         self.ble_thread = None
         self.should_stop = False
         
+        # API服务器相关初始化
+        self.api_server = None
+        # [修正]：移除了此处的 tk.BooleanVar 初始化
+        
         self.floating_window = FloatingWindow(self)
         
         self.log_queue = queue.Queue()
-        # UPDATED: 在初始化OSC客户端时传入日志方法
         self.vrc_osc_client = VrcOscClient(self.log_message)
         self.vrc_connected = False
         
@@ -45,14 +49,21 @@ class HeartRateMonitor:
         self.root.geometry("650x850")
         self.root.resizable(True, True)
         
+        # [修正]：将所有 tk 变量的初始化移到此处
+        self.api_server_enabled = tk.BooleanVar(value=False)
+        self.api_port_var = tk.StringVar(value="8000")
+        self.vrc_ip_var = tk.StringVar(value="127.0.0.1")
+        self.vrc_port_var = tk.StringVar(value="9000")
+        
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky="nsew")
         
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(6, weight=1)
+        main_frame.rowconfigure(7, weight=1)
         
+        # 心率监控
         heart_rate_frame = ttk.LabelFrame(main_frame, text="心率监控", padding="10")
         heart_rate_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         heart_rate_frame.columnconfigure(0, weight=1)
@@ -63,6 +74,7 @@ class HeartRateMonitor:
         self.status_label = tk.Label(heart_rate_frame, text="状态: 未连接", font=("Arial", 12), fg="gray")
         self.status_label.grid(row=1, column=0, pady=(5, 0))
         
+        # 设备信息
         device_frame = ttk.LabelFrame(main_frame, text="设备信息", padding="10")
         device_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         device_frame.columnconfigure(1, weight=1)
@@ -71,6 +83,7 @@ class HeartRateMonitor:
         self.device_label = ttk.Label(device_frame, text="未选择设备")
         self.device_label.grid(row=0, column=1, sticky="ew", padx=(10, 0))
         
+        # 连接控制
         button_frame = ttk.LabelFrame(main_frame, text="连接控制", padding="10")
         button_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         button_frame.columnconfigure(0, weight=1)
@@ -86,6 +99,7 @@ class HeartRateMonitor:
         self.disconnect_button = ttk.Button(button_frame, text="断开", command=self.disconnect_device, state=tk.DISABLED)
         self.disconnect_button.grid(row=0, column=2, padx=(5, 0), sticky="ew")
         
+        # 悬浮窗控制
         floating_frame = ttk.LabelFrame(main_frame, text="悬浮窗控制", padding="10")
         floating_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         floating_frame.columnconfigure(0, weight=1)
@@ -101,16 +115,15 @@ class HeartRateMonitor:
         self.save_button = ttk.Button(floating_frame, text="保存设置", command=self.save_settings)
         self.save_button.grid(row=0, column=2, padx=(5, 0), sticky="ew")
         
+        # VRChat OSC
         vrc_frame = ttk.LabelFrame(main_frame, text="VRChat OSC 同步", padding="10")
         vrc_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         vrc_frame.columnconfigure(1, weight=1)
 
         ttk.Label(vrc_frame, text="IP 地址:").grid(row=0, column=0, sticky=tk.W)
-        self.vrc_ip_var = tk.StringVar(value="127.0.0.1")
         ttk.Entry(vrc_frame, textvariable=self.vrc_ip_var).grid(row=0, column=1, sticky="ew", padx=5)
 
         ttk.Label(vrc_frame, text="端口:").grid(row=1, column=0, sticky=tk.W, pady=(5,0))
-        self.vrc_port_var = tk.StringVar(value="9000")
         ttk.Entry(vrc_frame, textvariable=self.vrc_port_var).grid(row=1, column=1, sticky="ew", padx=5, pady=(5,0))
 
         self.vrc_connect_button = ttk.Button(vrc_frame, text="连接 OSC", command=self.toggle_vrc_connection)
@@ -119,8 +132,23 @@ class HeartRateMonitor:
         self.vrc_status_label = ttk.Label(vrc_frame, text="状态: 未连接", font=("Arial", 10), foreground="gray")
         self.vrc_status_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(5,0))
         
+        # API服务器
+        api_frame = ttk.LabelFrame(main_frame, text="心率API服务器", padding="10")
+        api_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        api_frame.columnconfigure(1, weight=1)
+
+        self.api_server_enabled.trace_add("write", self.toggle_api_server)
+        ttk.Checkbutton(api_frame, text="启用API服务器", variable=self.api_server_enabled).grid(row=0, column=0, sticky=tk.W)
+
+        ttk.Label(api_frame, text="端口:").grid(row=1, column=0, sticky=tk.W, pady=(5,0))
+        ttk.Entry(api_frame, textvariable=self.api_port_var, width=10).grid(row=1, column=1, sticky="ew", padx=5, pady=(5,0))
+
+        self.api_status_label = ttk.Label(api_frame, text="状态: 已禁用", font=("Arial", 10), foreground="gray")
+        self.api_status_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5,0))
+        
+        # 悬浮窗颜色
         color_frame = ttk.LabelFrame(main_frame, text="悬浮窗颜色设置", padding="10")
-        color_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        color_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         color_frame.columnconfigure(2, weight=1)
 
         ttk.Label(color_frame, text="解锁时 (可拖动):").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
@@ -133,8 +161,9 @@ class HeartRateMonitor:
         self.locked_color_preview.grid(row=1, column=1, pady=(5, 0), sticky=tk.W)
         ttk.Button(color_frame, text="选择颜色...", command=self.choose_locked_color).grid(row=1, column=2, padx=5, pady=(5, 0), sticky=tk.E)
         
+        # 日志
         log_frame = ttk.LabelFrame(main_frame, text="日志", padding="10")
-        log_frame.grid(row=6, column=0, columnspan=2, sticky="nsew")
+        log_frame.grid(row=7, column=0, columnspan=2, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         
@@ -198,6 +227,32 @@ class HeartRateMonitor:
     def clear_logs(self):
         self.log_text.delete(1.0, tk.END)
 
+    def toggle_api_server(self, *args):
+        if self.api_server_enabled.get():
+            # 启用服务器
+            if self.api_server and self.api_server.httpd:
+                self.log_message("API服务器已在运行。")
+                return
+            try:
+                port = int(self.api_port_var.get())
+                self.api_server = ApiServer(self, port)
+                self.api_server.start()
+                if self.api_server and self.api_server.httpd:
+                    self.api_status_label.config(text=f"状态: 运行于 http://127.0.0.1:{port}", foreground="green")
+                else:
+                    self.api_status_label.config(text="状态: 启动失败", foreground="red")
+                    self.api_server_enabled.set(False) # 启动失败则取消勾选
+            except ValueError:
+                self.log_message("API服务器启动失败：端口号必须是有效的数字。")
+                self.api_status_label.config(text="状态: 端口号无效", foreground="red")
+                self.api_server_enabled.set(False) # 启动失败则取消勾选
+        else:
+            # 禁用服务器
+            if self.api_server:
+                self.api_server.stop()
+                self.api_server = None
+            self.api_status_label.config(text="状态: 已禁用", foreground="gray")
+
     def save_settings(self):
         geometry = self.floating_window.last_geometry
         if self.floating_window.is_open():
@@ -218,6 +273,10 @@ class HeartRateMonitor:
             "vrc_osc": {
                 "ip": self.vrc_ip_var.get(),
                 "port": self.vrc_port_var.get()
+            },
+            "api_server": {
+                "enabled": self.api_server_enabled.get(),
+                "port": self.api_port_var.get()
             }
         }
         save_config(config)
@@ -258,6 +317,14 @@ class HeartRateMonitor:
             self.vrc_ip_var.set(vrc_settings.get("ip", "127.0.0.1"))
             self.vrc_port_var.set(vrc_settings.get("port", "9000"))
             self.log_message("已加载 VRChat OSC 设置")
+
+        api_settings = config.get("api_server")
+        if api_settings:
+            self.api_port_var.set(api_settings.get("port", "8080"))
+            if api_settings.get("enabled", False):
+                # Use after to ensure UI is ready before triggering the trace callback
+                self.root.after(100, lambda: self.api_server_enabled.set(True))
+            self.log_message("已加载 API 服务器设置")
 
     def toggle_vrc_connection(self):
         if self.vrc_connected:
@@ -322,6 +389,9 @@ class HeartRateMonitor:
         if self.vrc_connected:
             self.vrc_osc_client.disconnect()
         
+        if self.api_server:
+            self.api_server.stop()
+            
         if self.floating_window.is_open():
             self.floating_window.close_window()
         
