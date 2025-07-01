@@ -3,3 +3,8 @@ __pycache__/
 **/__pycache__/
 /venv
 /config.json
+/output
+/temp_build
+/build
+/dist
+/备注.txt
