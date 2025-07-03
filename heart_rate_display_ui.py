@@ -5,6 +5,8 @@ from tkinter import ttk, scrolledtext, messagebox, colorchooser, filedialog
 import sys
 import queue
 from datetime import datetime
+import json
+from urllib import request, error
 
 from get_heart_rate.heart_rate_tool import get_heart_rate, scan_and_select_device
 from config import save_config, load_config
@@ -51,10 +53,13 @@ class HeartRateMonitor:
         self.api_port_var = tk.StringVar(value="8000")
         self.vrc_ip_var = tk.StringVar(value="127.0.0.1")
         self.vrc_port_var = tk.StringVar(value="9000")
-        # [新增] 用于格式设置UI的变量
         self.format_var = tk.StringVar(value="❤️{bpm}")
         self.image_path_var = tk.StringVar(value="未选择图片")
         
+        # [修改] 推送模式UI变量，默认端口改为8001
+        self.push_enabled_var = tk.BooleanVar(value=False)
+        self.push_url_var = tk.StringVar(value="http://127.0.0.1:8001/heartrate")
+
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky="nsew")
         
@@ -114,7 +119,7 @@ class HeartRateMonitor:
         self.vrc_status_label = ttk.Label(vrc_frame, text="状态: 未连接", font=("Arial", 10), foreground="gray")
         self.vrc_status_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(5,0))
         
-        api_frame = ttk.LabelFrame(middle_column_frame, text="心率API服务器", padding="10")
+        api_frame = ttk.LabelFrame(middle_column_frame, text="心率API服务器 (被动获取)", padding="10")
         api_frame.pack(fill="x", pady=PAD_Y)
         api_frame.columnconfigure(1, weight=1)
         self.api_server_enabled.trace_add("write", self.toggle_api_server)
@@ -123,6 +128,17 @@ class HeartRateMonitor:
         ttk.Entry(api_frame, textvariable=self.api_port_var, width=10).grid(row=1, column=1, sticky="ew", padx=5, pady=(5,0))
         self.api_status_label = ttk.Label(api_frame, text="状态: 已禁用", font=("Arial", 10), foreground="gray")
         self.api_status_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5,0))
+
+        # Webhook 推送模块
+        push_frame = ttk.LabelFrame(middle_column_frame, text="Webhook 数据推送 (主动发送)", padding="10")
+        push_frame.pack(fill="x", pady=PAD_Y)
+        push_frame.columnconfigure(1, weight=1)
+        self.push_enabled_var.trace_add("write", self.toggle_push_service)
+        ttk.Checkbutton(push_frame, text="启用推送", variable=self.push_enabled_var).grid(row=0, column=0, columnspan=2, sticky=tk.W)
+        ttk.Label(push_frame, text="URL:").grid(row=1, column=0, sticky=tk.W, pady=(5,0))
+        ttk.Entry(push_frame, textvariable=self.push_url_var).grid(row=1, column=1, sticky="ew", padx=5, pady=(5,0))
+        self.push_status_label = ttk.Label(push_frame, text="状态: 已禁用", font=("Arial", 10), foreground="gray")
+        self.push_status_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5,0))
         
         # == 第3列: 悬浮窗 & 设置 ==
         floating_frame = ttk.LabelFrame(right_column_frame, text="悬浮窗控制", padding="10")
@@ -147,20 +163,15 @@ class HeartRateMonitor:
         self.locked_color_preview.grid(row=1, column=1, pady=(5, 0), sticky=tk.W)
         ttk.Button(color_frame, text="选择...", command=self.choose_locked_color).grid(row=1, column=2, padx=5, pady=(5, 0), sticky=tk.E)
 
-        # [新增] 悬浮窗格式设置UI
         format_frame = ttk.LabelFrame(right_column_frame, text="悬浮窗格式设置", padding="10")
         format_frame.pack(fill="x", pady=PAD_Y)
         format_frame.columnconfigure(1, weight=1)
-
         ttk.Label(format_frame, text="格式:").grid(row=0, column=0, sticky=tk.W, padx=(0,5))
         ttk.Entry(format_frame, textvariable=self.format_var).grid(row=0, column=1, sticky="ew")
-
         ttk.Label(format_frame, text="提示:").grid(row=1, column=0, sticky=tk.W, pady=(5,0), padx=(0,5))
         ttk.Label(format_frame, text="{bpm}: 心率, {img}: 图片", foreground="gray").grid(row=1, column=1, sticky="w", pady=(5,0))
-        
         ttk.Label(format_frame, text="图片:").grid(row=2, column=0, sticky=tk.W, pady=(5,0), padx=(0,5))
         ttk.Label(format_frame, textvariable=self.image_path_var, wraplength=160, justify=tk.LEFT, foreground="blue").grid(row=2, column=1, sticky="ew", pady=(5,0))
-
         btn_subframe = ttk.Frame(format_frame)
         btn_subframe.grid(row=3, column=0, columnspan=2, pady=(10,0), sticky="ew")
         btn_subframe.columnconfigure((0,1,2), weight=1)
@@ -168,19 +179,74 @@ class HeartRateMonitor:
         ttk.Button(btn_subframe, text="清除图片", command=self.clear_image).grid(row=0, column=1, sticky='ew', padx=5)
         ttk.Button(btn_subframe, text="应用格式", command=self.apply_format).grid(row=0, column=2, sticky='ew', padx=(5,0))
 
-
         # == 底部日志区域 ==
         log_frame = ttk.LabelFrame(main_frame, text="日志", padding="10")
         log_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
-        
         self.log_text = scrolledtext.ScrolledText(log_frame, height=6, width=70, font=("Consolas", 9))
         self.log_text.grid(row=0, column=0, sticky="nsew")
-        
         ttk.Button(log_frame, text="清除日志", command=self.clear_logs).grid(row=1, column=0, pady=(5, 0), sticky=tk.E)
 
-    # [新增] 选择图片的方法
+    def toggle_push_service(self, *args):
+        if self.push_enabled_var.get():
+            url = self.push_url_var.get()
+            if not url or not url.startswith(('http://', 'https://')):
+                self.log_message("启用推送失败：URL格式无效。")
+                self.push_status_label.config(text="状态: URL无效", foreground="red")
+                self.push_enabled_var.set(False)
+                return
+            self.push_status_label.config(text="状态: 已启用", foreground="blue")
+            self.log_message(f"Webhook 推送已启用，将推送至 {url}")
+        else:
+            self.push_status_label.config(text="状态: 已禁用", foreground="gray")
+            self.log_message("Webhook 推送已禁用。")
+
+    def send_push_notification(self):
+        url = self.push_url_var.get()
+        if not url:
+            return
+
+        payload = {
+            "heart_rate": self.heart_rate,
+            "connected": self.connected
+        }
+        
+        thread = threading.Thread(target=self._execute_push_request, args=(url, payload), daemon=True)
+        thread.start()
+
+    def _execute_push_request(self, url, payload):
+        try:
+            data = json.dumps(payload).encode('utf-8')
+            req = request.Request(url, data=data, headers={'Content-Type': 'application/json', 'User-Agent': 'HeartRateMonitor'})
+            
+            with request.urlopen(req, timeout=5) as response:
+                if 200 <= response.status < 300:
+                    def update_status_success():
+                        self.push_status_label.config(text=f"状态: 推送成功 (HTTP {response.status})", foreground="green")
+                    self.root.after(0, update_status_success)
+                else:
+                    def update_status_server_error():
+                        self.push_status_label.config(text=f"状态: 推送失败 (HTTP {response.status})", foreground="red")
+                        self.log_message(f"推送失败，服务器返回: {response.status} {response.reason}")
+                    self.root.after(0, update_status_server_error)
+
+        except error.HTTPError as e:
+            def update_status_http_error():
+                self.push_status_label.config(text=f"状态: 推送失败 (HTTP {e.code})", foreground="red")
+                self.log_message(f"HTTP推送错误: {e}")
+            self.root.after(0, update_status_http_error)
+        except error.URLError as e:
+            def update_status_url_error():
+                self.push_status_label.config(text="状态: 推送失败 (网络错误)", foreground="red")
+                self.log_message(f"URL推送错误: {e.reason}")
+            self.root.after(0, update_status_url_error)
+        except Exception as e:
+            def update_status_generic_error():
+                self.push_status_label.config(text="状态: 推送失败 (未知错误)", foreground="red")
+                self.log_message(f"推送时发生未知错误: {e}")
+            self.root.after(0, update_status_generic_error)
+
     def choose_image(self):
         filepath = filedialog.askopenfilename(
             title="选择一张图片",
@@ -188,18 +254,15 @@ class HeartRateMonitor:
         )
         if filepath:
             self.floating_window.set_image(filepath)
-            # 只显示文件名以保持UI整洁
             import os
             self.image_path_var.set(os.path.basename(filepath))
             self.log_message(f"已选择图片: {filepath}")
 
-    # [新增] 清除图片的方法
     def clear_image(self):
         self.floating_window.set_image(None)
         self.image_path_var.set("未选择图片")
         self.log_message("已清除图片。")
 
-    # [新增] 应用格式的方法
     def apply_format(self):
         new_format = self.format_var.get()
         self.floating_window.update_format(new_format)
@@ -211,7 +274,7 @@ class HeartRateMonitor:
             color = color_code[1]
             self.floating_window.unlocked_color = color
             self.unlocked_color_preview.config(bg=color)
-            if self.floating_window.is_open(): # 实时应用
+            if self.floating_window.is_open():
                 self.floating_window.apply_lock_state()
             self.log_message(f"设置解锁颜色为: {color}")
 
@@ -221,7 +284,7 @@ class HeartRateMonitor:
             color = color_code[1]
             self.floating_window.locked_color = color
             self.locked_color_preview.config(bg=color)
-            if self.floating_window.is_open(): # 实时应用
+            if self.floating_window.is_open():
                 self.floating_window.apply_lock_state()
             self.log_message(f"设置锁定颜色为: {color}")
 
@@ -245,6 +308,10 @@ class HeartRateMonitor:
                 heart_rate = self.heart_rate_queue.get_nowait()
                 self.heart_rate = heart_rate
                 self.heart_rate_label.config(text=f"心率: {heart_rate}")
+
+                if self.push_enabled_var.get():
+                    self.send_push_notification()
+                
                 if heart_rate > 0:
                     self.heart_rate_label.config(fg="green")
                     if self.vrc_connected:
@@ -282,7 +349,6 @@ class HeartRateMonitor:
             self.api_status_label.config(text="状态: 已禁用", foreground="gray")
 
     def save_settings(self):
-        # [修改] 保存新的格式和图片路径设置
         geometry = self.floating_window.last_geometry
         if self.floating_window.is_open() and self.floating_window.window is not None:
             geometry = self.floating_window.window.geometry()
@@ -295,8 +361,8 @@ class HeartRateMonitor:
                 "geometry": geometry,
                 "unlocked_color": self.floating_window.unlocked_color,
                 "locked_color": self.floating_window.locked_color,
-                "format": self.format_var.get(),                     # 新增
-                "image_path": self.floating_window.image_path,       # 新增
+                "format": self.format_var.get(),
+                "image_path": self.floating_window.image_path,
             },
             "vrc_osc": {
                 "ip": self.vrc_ip_var.get(),
@@ -305,13 +371,16 @@ class HeartRateMonitor:
             "api_server": {
                 "enabled": self.api_server_enabled.get(),
                 "port": self.api_port_var.get()
+            },
+            "push_webhook": {
+                "enabled": self.push_enabled_var.get(),
+                "url": self.push_url_var.get()
             }
         }
         save_config(config)
         self.log_message("设置已保存到 config.json")
 
     def load_settings(self):
-        # [修改] 加载新的格式和图片路径设置
         config = load_config()
         if not config:
             self.log_message("未找到配置文件，使用默认设置。")
@@ -327,22 +396,16 @@ class HeartRateMonitor:
         window_settings = config.get("window")
         if window_settings:
             self.log_message("正在加载悬浮窗设置...")
-            
-            # 加载颜色
             unlocked_color = window_settings.get("unlocked_color", "#00FF00")
             locked_color = window_settings.get("locked_color", "#FF6600")
             self.floating_window.unlocked_color = unlocked_color
             self.floating_window.locked_color = locked_color
             self.unlocked_color_preview.config(bg=unlocked_color)
             self.locked_color_preview.config(bg=locked_color)
-
-            # [新增] 加载格式和图片
             format_str = window_settings.get("format", "❤️{bpm}")
             image_path = window_settings.get("image_path")
-            
             self.format_var.set(format_str)
             self.floating_window.update_format(format_str)
-            
             if image_path:
                 import os
                 if os.path.exists(image_path):
@@ -352,12 +415,9 @@ class HeartRateMonitor:
                 else:
                     self.log_message(f"配置文件中的图片路径不存在: {image_path}")
                     self.image_path_var.set("图片丢失")
-
-            # 加载窗口状态（必须在加载完上述所有设置后执行）
             if window_settings.get("visible", False):
                 self.floating_window.last_geometry = window_settings.get("geometry", "200x80+100+100")
                 self.toggle_floating_window() 
-                
                 if window_settings.get("locked", False):
                     self.root.after(100, self.toggle_floating_lock)
         
@@ -373,8 +433,14 @@ class HeartRateMonitor:
             if api_settings.get("enabled", False):
                 self.root.after(100, lambda: self.api_server_enabled.set(True))
             self.log_message("已加载 API 服务器设置")
-    
-    # --- 后续代码无重大修改，保持原样 ---
+
+        # [修改] 加载推送设置
+        push_settings = config.get("push_webhook")
+        if push_settings:
+            self.push_url_var.set(push_settings.get("url", "http://127.0.0.1:8001/heartrate"))
+            if push_settings.get("enabled", False):
+                self.root.after(100, lambda: self.push_enabled_var.set(True))
+            self.log_message("已加载 Webhook 推送设置")
 
     def toggle_vrc_connection(self):
         if self.vrc_connected:
@@ -437,7 +503,7 @@ class HeartRateMonitor:
             self.disconnect_device()
         if self.vrc_connected:
             self.vrc_osc_client.disconnect()
-        if self.api_server:
+        if self.api_server and self.api_server.httpd:
             self.api_server.stop()
         if self.floating_window.is_open():
             self.floating_window.close_window()
@@ -599,13 +665,13 @@ class HeartRateMonitor:
         self.connect_button.config(state=tk.NORMAL)
         self.disconnect_button.config(state=tk.DISABLED)
         self.heart_rate_label.config(text="心率: --", fg="red")
-        self.heart_rate_queue.put(0)
+        self.heart_rate_queue.put(0) 
         self.log_message("设备已断开连接")
 
     def disconnect_device(self):
         self.should_stop = True
         if self.ble_loop and not self.ble_loop.is_closed() and self.ble_loop.is_running():
-            self.ble_loop.call_soon_threadsafe(lambda: None)
+            self.ble_loop.call_soon_threadsafe(self.ble_loop.stop)
         self._on_disconnect()
         self.log_message("手动断开连接")
 
