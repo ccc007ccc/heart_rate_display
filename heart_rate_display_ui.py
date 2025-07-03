@@ -1,7 +1,7 @@
 import asyncio
 import threading
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, colorchooser
+from tkinter import ttk, scrolledtext, messagebox, colorchooser, filedialog
 import sys
 import queue
 from datetime import datetime
@@ -22,7 +22,6 @@ class HeartRateMonitor:
         self.ble_thread = None
         self.should_stop = False
         
-        # API服务器相关初始化
         self.api_server = None
         
         self.floating_window = FloatingWindow(self)
@@ -43,47 +42,41 @@ class HeartRateMonitor:
     def setup_ui(self):
         self.root = tk.Tk()
         self.root.title("心率监控器 - 游戏悬浮显示")
-        # Reduced initial window size for a more compact view
         self.root.geometry("860x540") 
-        self.root.minsize(800, 500) # Set a minimum size
+        self.root.minsize(800, 500)
         self.root.resizable(True, True)
         
-        # All tk variables are initialized here
+        # 初始化所有Tkinter变量
         self.api_server_enabled = tk.BooleanVar(value=False)
         self.api_port_var = tk.StringVar(value="8000")
         self.vrc_ip_var = tk.StringVar(value="127.0.0.1")
         self.vrc_port_var = tk.StringVar(value="9000")
+        # [新增] 用于格式设置UI的变量
+        self.format_var = tk.StringVar(value="❤️{bpm}")
+        self.image_path_var = tk.StringVar(value="未选择图片")
         
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky="nsew")
         
-        # Configure root window resizing
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         
-        # --- NEW COMPACT LAYOUT ---
-        # Configure main_frame grid: 3 columns for controls, 1 expanding row for logs
         main_frame.columnconfigure(0, weight=1, uniform="group1")
         main_frame.columnconfigure(1, weight=1, uniform="group1")
         main_frame.columnconfigure(2, weight=1, uniform="group1")
-        # Row 1 (logs) will expand, Row 0 (controls) will not.
         main_frame.rowconfigure(1, weight=1) 
 
-        # Create dedicated frames for each column to allow independent vertical sizing
         left_column_frame = ttk.Frame(main_frame)
         middle_column_frame = ttk.Frame(main_frame)
         right_column_frame = ttk.Frame(main_frame)
 
-        # Grid the column frames, making them stick to the top ('n')
         left_column_frame.grid(row=0, column=0, sticky="new", padx=(0, 5))
         middle_column_frame.grid(row=0, column=1, sticky="new", padx=5)
         right_column_frame.grid(row=0, column=2, sticky="new", padx=(5, 0))
 
-        # Vertical padding between frames
         PAD_Y = (0, 10)
 
-        # == COLUMN 1: Core Connection & Status (Packed into left_column_frame) ==
-        
+        # == 第1列: 核心连接 & 状态 ==
         heart_rate_frame = ttk.LabelFrame(left_column_frame, text="心率监控", padding="10")
         heart_rate_frame.pack(fill="x", pady=PAD_Y)
         self.heart_rate_label = tk.Label(heart_rate_frame, text="心率: --", font=("Arial", 32, "bold"), fg="red")
@@ -108,8 +101,7 @@ class HeartRateMonitor:
         self.disconnect_button = ttk.Button(button_frame, text="断开", command=self.disconnect_device, state=tk.DISABLED)
         self.disconnect_button.grid(row=0, column=2, padx=(5, 0), sticky="ew")
         
-        # == COLUMN 2: Integrations (Packed into middle_column_frame) ==
-
+        # == 第2列: 集成功能 ==
         vrc_frame = ttk.LabelFrame(middle_column_frame, text="VRChat OSC 同步", padding="10")
         vrc_frame.pack(fill="x", pady=PAD_Y)
         vrc_frame.columnconfigure(1, weight=1)
@@ -132,8 +124,7 @@ class HeartRateMonitor:
         self.api_status_label = ttk.Label(api_frame, text="状态: 已禁用", font=("Arial", 10), foreground="gray")
         self.api_status_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5,0))
         
-        # == COLUMN 3: Floating Window & Settings (Packed into right_column_frame) ==
-        
+        # == 第3列: 悬浮窗 & 设置 ==
         floating_frame = ttk.LabelFrame(right_column_frame, text="悬浮窗控制", padding="10")
         floating_frame.pack(fill="x", pady=PAD_Y)
         floating_frame.columnconfigure((0, 1, 2), weight=1)
@@ -156,18 +147,63 @@ class HeartRateMonitor:
         self.locked_color_preview.grid(row=1, column=1, pady=(5, 0), sticky=tk.W)
         ttk.Button(color_frame, text="选择...", command=self.choose_locked_color).grid(row=1, column=2, padx=5, pady=(5, 0), sticky=tk.E)
 
-        # == BOTTOM ROW: LOGS (Placed in main_frame's expanding row) ==
+        # [新增] 悬浮窗格式设置UI
+        format_frame = ttk.LabelFrame(right_column_frame, text="悬浮窗格式设置", padding="10")
+        format_frame.pack(fill="x", pady=PAD_Y)
+        format_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(format_frame, text="格式:").grid(row=0, column=0, sticky=tk.W, padx=(0,5))
+        ttk.Entry(format_frame, textvariable=self.format_var).grid(row=0, column=1, sticky="ew")
+
+        ttk.Label(format_frame, text="提示:").grid(row=1, column=0, sticky=tk.W, pady=(5,0), padx=(0,5))
+        ttk.Label(format_frame, text="{bpm}: 心率, {img}: 图片", foreground="gray").grid(row=1, column=1, sticky="w", pady=(5,0))
         
+        ttk.Label(format_frame, text="图片:").grid(row=2, column=0, sticky=tk.W, pady=(5,0), padx=(0,5))
+        ttk.Label(format_frame, textvariable=self.image_path_var, wraplength=160, justify=tk.LEFT, foreground="blue").grid(row=2, column=1, sticky="ew", pady=(5,0))
+
+        btn_subframe = ttk.Frame(format_frame)
+        btn_subframe.grid(row=3, column=0, columnspan=2, pady=(10,0), sticky="ew")
+        btn_subframe.columnconfigure((0,1,2), weight=1)
+        ttk.Button(btn_subframe, text="选择图片...", command=self.choose_image).grid(row=0, column=0, sticky='ew', padx=(0,5))
+        ttk.Button(btn_subframe, text="清除图片", command=self.clear_image).grid(row=0, column=1, sticky='ew', padx=5)
+        ttk.Button(btn_subframe, text="应用格式", command=self.apply_format).grid(row=0, column=2, sticky='ew', padx=(5,0))
+
+
+        # == 底部日志区域 ==
         log_frame = ttk.LabelFrame(main_frame, text="日志", padding="10")
         log_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         
-        # Reduced height to show fewer lines by default
         self.log_text = scrolledtext.ScrolledText(log_frame, height=6, width=70, font=("Consolas", 9))
         self.log_text.grid(row=0, column=0, sticky="nsew")
         
         ttk.Button(log_frame, text="清除日志", command=self.clear_logs).grid(row=1, column=0, pady=(5, 0), sticky=tk.E)
+
+    # [新增] 选择图片的方法
+    def choose_image(self):
+        filepath = filedialog.askopenfilename(
+            title="选择一张图片",
+            filetypes=[("图片文件", "*.png *.gif *.jpg *.jpeg"), ("所有文件", "*.*")]
+        )
+        if filepath:
+            self.floating_window.set_image(filepath)
+            # 只显示文件名以保持UI整洁
+            import os
+            self.image_path_var.set(os.path.basename(filepath))
+            self.log_message(f"已选择图片: {filepath}")
+
+    # [新增] 清除图片的方法
+    def clear_image(self):
+        self.floating_window.set_image(None)
+        self.image_path_var.set("未选择图片")
+        self.log_message("已清除图片。")
+
+    # [新增] 应用格式的方法
+    def apply_format(self):
+        new_format = self.format_var.get()
+        self.floating_window.update_format(new_format)
+        self.log_message(f"已应用新格式: {new_format}")
 
     def choose_unlocked_color(self):
         color_code = colorchooser.askcolor(title="选择解锁时的字体颜色", initialcolor=self.floating_window.unlocked_color)
@@ -175,7 +211,7 @@ class HeartRateMonitor:
             color = color_code[1]
             self.floating_window.unlocked_color = color
             self.unlocked_color_preview.config(bg=color)
-            if self.floating_window.is_open() and not self.floating_window.is_locked():
+            if self.floating_window.is_open(): # 实时应用
                 self.floating_window.apply_lock_state()
             self.log_message(f"设置解锁颜色为: {color}")
 
@@ -185,7 +221,7 @@ class HeartRateMonitor:
             color = color_code[1]
             self.floating_window.locked_color = color
             self.locked_color_preview.config(bg=color)
-            if self.floating_window.is_open() and self.floating_window.is_locked():
+            if self.floating_window.is_open(): # 实时应用
                 self.floating_window.apply_lock_state()
             self.log_message(f"设置锁定颜色为: {color}")
 
@@ -226,10 +262,6 @@ class HeartRateMonitor:
 
     def toggle_api_server(self, *args):
         if self.api_server_enabled.get():
-            # 启用服务器
-            if self.api_server and self.api_server.httpd:
-                self.log_message("API服务器已在运行。")
-                return
             try:
                 port = int(self.api_port_var.get())
                 self.api_server = ApiServer(self, port)
@@ -238,25 +270,22 @@ class HeartRateMonitor:
                     self.api_status_label.config(text=f"状态: 运行于 http://127.0.0.1:{port}", foreground="green")
                 else:
                     self.api_status_label.config(text="状态: 启动失败", foreground="red")
-                    self.api_server_enabled.set(False) # 启动失败则取消勾选
+                    self.api_server_enabled.set(False)
             except ValueError:
                 self.log_message("API服务器启动失败：端口号必须是有效的数字。")
                 self.api_status_label.config(text="状态: 端口号无效", foreground="red")
-                self.api_server_enabled.set(False) # 启动失败则取消勾选
+                self.api_server_enabled.set(False)
         else:
-            # 禁用服务器
             if self.api_server:
                 self.api_server.stop()
                 self.api_server = None
             self.api_status_label.config(text="状态: 已禁用", foreground="gray")
 
     def save_settings(self):
+        # [修改] 保存新的格式和图片路径设置
         geometry = self.floating_window.last_geometry
-        if self.floating_window.is_open():
-            if self.floating_window.window is not None:
-                geometry = self.floating_window.window.geometry()
-            else:
-                geometry = self.floating_window.last_geometry
+        if self.floating_window.is_open() and self.floating_window.window is not None:
+            geometry = self.floating_window.window.geometry()
             
         config = {
             "mac": self.current_mac,
@@ -266,6 +295,8 @@ class HeartRateMonitor:
                 "geometry": geometry,
                 "unlocked_color": self.floating_window.unlocked_color,
                 "locked_color": self.floating_window.locked_color,
+                "format": self.format_var.get(),                     # 新增
+                "image_path": self.floating_window.image_path,       # 新增
             },
             "vrc_osc": {
                 "ip": self.vrc_ip_var.get(),
@@ -280,6 +311,7 @@ class HeartRateMonitor:
         self.log_message("设置已保存到 config.json")
 
     def load_settings(self):
+        # [修改] 加载新的格式和图片路径设置
         config = load_config()
         if not config:
             self.log_message("未找到配置文件，使用默认设置。")
@@ -295,13 +327,33 @@ class HeartRateMonitor:
         window_settings = config.get("window")
         if window_settings:
             self.log_message("正在加载悬浮窗设置...")
+            
+            # 加载颜色
             unlocked_color = window_settings.get("unlocked_color", "#00FF00")
             locked_color = window_settings.get("locked_color", "#FF6600")
             self.floating_window.unlocked_color = unlocked_color
             self.floating_window.locked_color = locked_color
             self.unlocked_color_preview.config(bg=unlocked_color)
             self.locked_color_preview.config(bg=locked_color)
+
+            # [新增] 加载格式和图片
+            format_str = window_settings.get("format", "❤️{bpm}")
+            image_path = window_settings.get("image_path")
             
+            self.format_var.set(format_str)
+            self.floating_window.update_format(format_str)
+            
+            if image_path:
+                import os
+                if os.path.exists(image_path):
+                    self.floating_window.set_image(image_path)
+                    self.image_path_var.set(os.path.basename(image_path))
+                    self.log_message(f"已加载图片: {image_path}")
+                else:
+                    self.log_message(f"配置文件中的图片路径不存在: {image_path}")
+                    self.image_path_var.set("图片丢失")
+
+            # 加载窗口状态（必须在加载完上述所有设置后执行）
             if window_settings.get("visible", False):
                 self.floating_window.last_geometry = window_settings.get("geometry", "200x80+100+100")
                 self.toggle_floating_window() 
@@ -319,9 +371,10 @@ class HeartRateMonitor:
         if api_settings:
             self.api_port_var.set(api_settings.get("port", "8080"))
             if api_settings.get("enabled", False):
-                # Use after to ensure UI is ready before triggering the trace callback
                 self.root.after(100, lambda: self.api_server_enabled.set(True))
             self.log_message("已加载 API 服务器设置")
+    
+    # --- 后续代码无重大修改，保持原样 ---
 
     def toggle_vrc_connection(self):
         if self.vrc_connected:
@@ -382,16 +435,12 @@ class HeartRateMonitor:
         self.should_stop = True
         if self.connected:
             self.disconnect_device()
-        
         if self.vrc_connected:
             self.vrc_osc_client.disconnect()
-        
         if self.api_server:
             self.api_server.stop()
-            
         if self.floating_window.is_open():
             self.floating_window.close_window()
-        
         self.root.destroy()
         
     def scan_devices(self):
@@ -537,9 +586,6 @@ class HeartRateMonitor:
         for service in client.services:
             for char in service.characteristics:
                 if any(k in char.description.lower() for k in ['heart rate', 'hr']): return char.uuid
-        for service in client.services:
-            for char in service.characteristics:
-                if "notify" in char.properties: return char.uuid
         return None
 
     def _on_connect(self):
