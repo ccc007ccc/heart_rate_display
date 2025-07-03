@@ -1,5 +1,3 @@
-# heart_rate_display_ui.py
-
 import asyncio
 import threading
 import tkinter as tk
@@ -26,7 +24,6 @@ class HeartRateMonitor:
         
         # API服务器相关初始化
         self.api_server = None
-        # [修正]：移除了此处的 tk.BooleanVar 初始化
         
         self.floating_window = FloatingWindow(self)
         
@@ -46,10 +43,12 @@ class HeartRateMonitor:
     def setup_ui(self):
         self.root = tk.Tk()
         self.root.title("心率监控器 - 游戏悬浮显示")
-        self.root.geometry("650x850")
+        # Reduced initial window size for a more compact view
+        self.root.geometry("860x540") 
+        self.root.minsize(800, 500) # Set a minimum size
         self.root.resizable(True, True)
         
-        # [修正]：将所有 tk 变量的初始化移到此处
+        # All tk variables are initialized here
         self.api_server_enabled = tk.BooleanVar(value=False)
         self.api_port_var = tk.StringVar(value="8000")
         self.vrc_ip_var = tk.StringVar(value="127.0.0.1")
@@ -58,116 +57,114 @@ class HeartRateMonitor:
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky="nsew")
         
+        # Configure root window resizing
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(7, weight=1)
         
-        # 心率监控
-        heart_rate_frame = ttk.LabelFrame(main_frame, text="心率监控", padding="10")
-        heart_rate_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        heart_rate_frame.columnconfigure(0, weight=1)
+        # --- NEW COMPACT LAYOUT ---
+        # Configure main_frame grid: 3 columns for controls, 1 expanding row for logs
+        main_frame.columnconfigure(0, weight=1, uniform="group1")
+        main_frame.columnconfigure(1, weight=1, uniform="group1")
+        main_frame.columnconfigure(2, weight=1, uniform="group1")
+        # Row 1 (logs) will expand, Row 0 (controls) will not.
+        main_frame.rowconfigure(1, weight=1) 
+
+        # Create dedicated frames for each column to allow independent vertical sizing
+        left_column_frame = ttk.Frame(main_frame)
+        middle_column_frame = ttk.Frame(main_frame)
+        right_column_frame = ttk.Frame(main_frame)
+
+        # Grid the column frames, making them stick to the top ('n')
+        left_column_frame.grid(row=0, column=0, sticky="new", padx=(0, 5))
+        middle_column_frame.grid(row=0, column=1, sticky="new", padx=5)
+        right_column_frame.grid(row=0, column=2, sticky="new", padx=(5, 0))
+
+        # Vertical padding between frames
+        PAD_Y = (0, 10)
+
+        # == COLUMN 1: Core Connection & Status (Packed into left_column_frame) ==
         
+        heart_rate_frame = ttk.LabelFrame(left_column_frame, text="心率监控", padding="10")
+        heart_rate_frame.pack(fill="x", pady=PAD_Y)
         self.heart_rate_label = tk.Label(heart_rate_frame, text="心率: --", font=("Arial", 32, "bold"), fg="red")
-        self.heart_rate_label.grid(row=0, column=0)
-        
+        self.heart_rate_label.pack(pady=(0, 5))
         self.status_label = tk.Label(heart_rate_frame, text="状态: 未连接", font=("Arial", 12), fg="gray")
-        self.status_label.grid(row=1, column=0, pady=(5, 0))
+        self.status_label.pack()
         
-        # 设备信息
-        device_frame = ttk.LabelFrame(main_frame, text="设备信息", padding="10")
-        device_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        device_frame = ttk.LabelFrame(left_column_frame, text="设备信息", padding="10")
+        device_frame.pack(fill="x", pady=PAD_Y)
         device_frame.columnconfigure(1, weight=1)
-        
         ttk.Label(device_frame, text="当前设备:").grid(row=0, column=0, sticky=tk.W)
         self.device_label = ttk.Label(device_frame, text="未选择设备")
         self.device_label.grid(row=0, column=1, sticky="ew", padx=(10, 0))
         
-        # 连接控制
-        button_frame = ttk.LabelFrame(main_frame, text="连接控制", padding="10")
-        button_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        button_frame.columnconfigure(0, weight=1)
-        button_frame.columnconfigure(1, weight=1)
-        button_frame.columnconfigure(2, weight=1)
-        
+        button_frame = ttk.LabelFrame(left_column_frame, text="连接控制", padding="10")
+        button_frame.pack(fill="x", pady=PAD_Y)
+        button_frame.columnconfigure((0, 1, 2), weight=1)
         self.scan_button = ttk.Button(button_frame, text="扫描设备", command=self.scan_devices)
         self.scan_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
-        
         self.connect_button = ttk.Button(button_frame, text="连接", command=self.connect_device, state=tk.DISABLED)
         self.connect_button.grid(row=0, column=1, padx=5, sticky="ew")
-        
         self.disconnect_button = ttk.Button(button_frame, text="断开", command=self.disconnect_device, state=tk.DISABLED)
         self.disconnect_button.grid(row=0, column=2, padx=(5, 0), sticky="ew")
         
-        # 悬浮窗控制
-        floating_frame = ttk.LabelFrame(main_frame, text="悬浮窗控制", padding="10")
-        floating_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        floating_frame.columnconfigure(0, weight=1)
-        floating_frame.columnconfigure(1, weight=1)
-        floating_frame.columnconfigure(2, weight=1) 
-        
-        self.show_floating_button = ttk.Button(floating_frame, text="显示悬浮窗", command=self.toggle_floating_window)
-        self.show_floating_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
-        
-        self.lock_button = ttk.Button(floating_frame, text="锁定悬浮窗", command=self.toggle_floating_lock, state=tk.DISABLED)
-        self.lock_button.grid(row=0, column=1, padx=(5, 0), sticky="ew")
+        # == COLUMN 2: Integrations (Packed into middle_column_frame) ==
 
-        self.save_button = ttk.Button(floating_frame, text="保存设置", command=self.save_settings)
-        self.save_button.grid(row=0, column=2, padx=(5, 0), sticky="ew")
-        
-        # VRChat OSC
-        vrc_frame = ttk.LabelFrame(main_frame, text="VRChat OSC 同步", padding="10")
-        vrc_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        vrc_frame = ttk.LabelFrame(middle_column_frame, text="VRChat OSC 同步", padding="10")
+        vrc_frame.pack(fill="x", pady=PAD_Y)
         vrc_frame.columnconfigure(1, weight=1)
-
         ttk.Label(vrc_frame, text="IP 地址:").grid(row=0, column=0, sticky=tk.W)
         ttk.Entry(vrc_frame, textvariable=self.vrc_ip_var).grid(row=0, column=1, sticky="ew", padx=5)
-
         ttk.Label(vrc_frame, text="端口:").grid(row=1, column=0, sticky=tk.W, pady=(5,0))
         ttk.Entry(vrc_frame, textvariable=self.vrc_port_var).grid(row=1, column=1, sticky="ew", padx=5, pady=(5,0))
-
         self.vrc_connect_button = ttk.Button(vrc_frame, text="连接 OSC", command=self.toggle_vrc_connection)
         self.vrc_connect_button.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10,0))
-        
         self.vrc_status_label = ttk.Label(vrc_frame, text="状态: 未连接", font=("Arial", 10), foreground="gray")
         self.vrc_status_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(5,0))
         
-        # API服务器
-        api_frame = ttk.LabelFrame(main_frame, text="心率API服务器", padding="10")
-        api_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        api_frame = ttk.LabelFrame(middle_column_frame, text="心率API服务器", padding="10")
+        api_frame.pack(fill="x", pady=PAD_Y)
         api_frame.columnconfigure(1, weight=1)
-
         self.api_server_enabled.trace_add("write", self.toggle_api_server)
-        ttk.Checkbutton(api_frame, text="启用API服务器", variable=self.api_server_enabled).grid(row=0, column=0, sticky=tk.W)
-
+        ttk.Checkbutton(api_frame, text="启用API服务器", variable=self.api_server_enabled).grid(row=0, column=0, sticky=tk.W, columnspan=2)
         ttk.Label(api_frame, text="端口:").grid(row=1, column=0, sticky=tk.W, pady=(5,0))
         ttk.Entry(api_frame, textvariable=self.api_port_var, width=10).grid(row=1, column=1, sticky="ew", padx=5, pady=(5,0))
-
         self.api_status_label = ttk.Label(api_frame, text="状态: 已禁用", font=("Arial", 10), foreground="gray")
         self.api_status_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5,0))
         
-        # 悬浮窗颜色
-        color_frame = ttk.LabelFrame(main_frame, text="悬浮窗颜色设置", padding="10")
-        color_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        color_frame.columnconfigure(2, weight=1)
-
-        ttk.Label(color_frame, text="解锁时 (可拖动):").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-        self.unlocked_color_preview = tk.Label(color_frame, text="    ", bg=self.floating_window.unlocked_color)
-        self.unlocked_color_preview.grid(row=0, column=1, sticky=tk.W)
-        ttk.Button(color_frame, text="选择颜色...", command=self.choose_unlocked_color).grid(row=0, column=2, padx=5, sticky=tk.E)
-
-        ttk.Label(color_frame, text="锁定时 (穿透点击):").grid(row=1, column=0, sticky=tk.W, pady=(5, 0), padx=(0, 10))
-        self.locked_color_preview = tk.Label(color_frame, text="    ", bg=self.floating_window.locked_color)
-        self.locked_color_preview.grid(row=1, column=1, pady=(5, 0), sticky=tk.W)
-        ttk.Button(color_frame, text="选择颜色...", command=self.choose_locked_color).grid(row=1, column=2, padx=5, pady=(5, 0), sticky=tk.E)
+        # == COLUMN 3: Floating Window & Settings (Packed into right_column_frame) ==
         
-        # 日志
+        floating_frame = ttk.LabelFrame(right_column_frame, text="悬浮窗控制", padding="10")
+        floating_frame.pack(fill="x", pady=PAD_Y)
+        floating_frame.columnconfigure((0, 1, 2), weight=1)
+        self.show_floating_button = ttk.Button(floating_frame, text="显示悬浮窗", command=self.toggle_floating_window)
+        self.show_floating_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
+        self.lock_button = ttk.Button(floating_frame, text="锁定悬浮窗", command=self.toggle_floating_lock, state=tk.DISABLED)
+        self.lock_button.grid(row=0, column=1, padx=5, sticky="ew")
+        self.save_button = ttk.Button(floating_frame, text="保存设置", command=self.save_settings)
+        self.save_button.grid(row=0, column=2, padx=(5, 0), sticky="ew")
+        
+        color_frame = ttk.LabelFrame(right_column_frame, text="悬浮窗颜色设置", padding="10")
+        color_frame.pack(fill="x", pady=PAD_Y)
+        color_frame.columnconfigure(2, weight=1)
+        ttk.Label(color_frame, text="解锁时 (可拖动):").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        self.unlocked_color_preview = tk.Label(color_frame, text="      ", bg=self.floating_window.unlocked_color)
+        self.unlocked_color_preview.grid(row=0, column=1, sticky=tk.W)
+        ttk.Button(color_frame, text="选择...", command=self.choose_unlocked_color).grid(row=0, column=2, padx=5, sticky=tk.E)
+        ttk.Label(color_frame, text="锁定时 (穿透点击):").grid(row=1, column=0, sticky=tk.W, pady=(5, 0), padx=(0, 10))
+        self.locked_color_preview = tk.Label(color_frame, text="      ", bg=self.floating_window.locked_color)
+        self.locked_color_preview.grid(row=1, column=1, pady=(5, 0), sticky=tk.W)
+        ttk.Button(color_frame, text="选择...", command=self.choose_locked_color).grid(row=1, column=2, padx=5, pady=(5, 0), sticky=tk.E)
+
+        # == BOTTOM ROW: LOGS (Placed in main_frame's expanding row) ==
+        
         log_frame = ttk.LabelFrame(main_frame, text="日志", padding="10")
-        log_frame.grid(row=7, column=0, columnspan=2, sticky="nsew")
+        log_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=12, width=70, font=("Consolas", 9))
+        # Reduced height to show fewer lines by default
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=6, width=70, font=("Consolas", 9))
         self.log_text.grid(row=0, column=0, sticky="nsew")
         
         ttk.Button(log_frame, text="清除日志", command=self.clear_logs).grid(row=1, column=0, pady=(5, 0), sticky=tk.E)
