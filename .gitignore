@@ -3,6 +3,7 @@ __pycache__/
 **/__pycache__/
 /venv
 /config.json
+/config_webhook.json
 /output
 /temp_build
 /build

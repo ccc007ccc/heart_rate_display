@@ -1,3 +1,5 @@
+# heart_rate_display_ui.py
+
 import asyncio
 import threading
 import tkinter as tk
@@ -13,6 +15,9 @@ from config import save_config, load_config
 from floating_window import FloatingWindow
 from vrc_osc import VrcOscClient
 from api_server import ApiServer
+from webhook_manager import WebhookManager
+from webhook_ui import WebhookWindow
+
 
 class HeartRateMonitor:
     def __init__(self):
@@ -34,11 +39,16 @@ class HeartRateMonitor:
         
         self.heart_rate_queue = queue.Queue()
         
+        # [修改] 初始化 Webhook 管理器，它会自动加载配置
+        self.webhook_manager = WebhookManager(self.log_message)
+        self.webhook_window = None
+        
         self.setup_ui()
         
         self.update_logs()
         self.update_heart_rate_display()
         
+        # [修改] load_settings 不再加载 webhooks
         self.load_settings()
 
     def setup_ui(self):
@@ -48,7 +58,6 @@ class HeartRateMonitor:
         self.root.minsize(800, 500)
         self.root.resizable(True, True)
         
-        # 初始化所有Tkinter变量
         self.api_server_enabled = tk.BooleanVar(value=False)
         self.api_port_var = tk.StringVar(value="8000")
         self.vrc_ip_var = tk.StringVar(value="127.0.0.1")
@@ -56,10 +65,6 @@ class HeartRateMonitor:
         self.format_var = tk.StringVar(value="❤️{bpm}")
         self.image_path_var = tk.StringVar(value="未选择图片")
         
-        # [修改] 推送模式UI变量，默认端口改为8001
-        self.push_enabled_var = tk.BooleanVar(value=False)
-        self.push_url_var = tk.StringVar(value="http://127.0.0.1:8001/heartrate")
-
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky="nsew")
         
@@ -81,7 +86,6 @@ class HeartRateMonitor:
 
         PAD_Y = (0, 10)
 
-        # == 第1列: 核心连接 & 状态 ==
         heart_rate_frame = ttk.LabelFrame(left_column_frame, text="心率监控", padding="10")
         heart_rate_frame.pack(fill="x", pady=PAD_Y)
         self.heart_rate_label = tk.Label(heart_rate_frame, text="心率: --", font=("Arial", 32, "bold"), fg="red")
@@ -106,7 +110,6 @@ class HeartRateMonitor:
         self.disconnect_button = ttk.Button(button_frame, text="断开", command=self.disconnect_device, state=tk.DISABLED)
         self.disconnect_button.grid(row=0, column=2, padx=(5, 0), sticky="ew")
         
-        # == 第2列: 集成功能 ==
         vrc_frame = ttk.LabelFrame(middle_column_frame, text="VRChat OSC 同步", padding="10")
         vrc_frame.pack(fill="x", pady=PAD_Y)
         vrc_frame.columnconfigure(1, weight=1)
@@ -129,18 +132,10 @@ class HeartRateMonitor:
         self.api_status_label = ttk.Label(api_frame, text="状态: 已禁用", font=("Arial", 10), foreground="gray")
         self.api_status_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5,0))
 
-        # Webhook 推送模块
-        push_frame = ttk.LabelFrame(middle_column_frame, text="Webhook 数据推送 (主动发送)", padding="10")
-        push_frame.pack(fill="x", pady=PAD_Y)
-        push_frame.columnconfigure(1, weight=1)
-        self.push_enabled_var.trace_add("write", self.toggle_push_service)
-        ttk.Checkbutton(push_frame, text="启用推送", variable=self.push_enabled_var).grid(row=0, column=0, columnspan=2, sticky=tk.W)
-        ttk.Label(push_frame, text="URL:").grid(row=1, column=0, sticky=tk.W, pady=(5,0))
-        ttk.Entry(push_frame, textvariable=self.push_url_var).grid(row=1, column=1, sticky="ew", padx=5, pady=(5,0))
-        self.push_status_label = ttk.Label(push_frame, text="状态: 已禁用", font=("Arial", 10), foreground="gray")
-        self.push_status_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5,0))
+        webhook_frame = ttk.LabelFrame(middle_column_frame, text="Webhook 数据推送(测试中)", padding="10")
+        webhook_frame.pack(fill="x", pady=PAD_Y)
+        ttk.Button(webhook_frame, text="打开 Webhook 设置...", command=self.open_webhook_window).pack(fill="x")
         
-        # == 第3列: 悬浮窗 & 设置 ==
         floating_frame = ttk.LabelFrame(right_column_frame, text="悬浮窗控制", padding="10")
         floating_frame.pack(fill="x", pady=PAD_Y)
         floating_frame.columnconfigure((0, 1, 2), weight=1)
@@ -179,7 +174,6 @@ class HeartRateMonitor:
         ttk.Button(btn_subframe, text="清除图片", command=self.clear_image).grid(row=0, column=1, sticky='ew', padx=5)
         ttk.Button(btn_subframe, text="应用格式", command=self.apply_format).grid(row=0, column=2, sticky='ew', padx=(5,0))
 
-        # == 底部日志区域 ==
         log_frame = ttk.LabelFrame(main_frame, text="日志", padding="10")
         log_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
         log_frame.columnconfigure(0, weight=1)
@@ -188,64 +182,12 @@ class HeartRateMonitor:
         self.log_text.grid(row=0, column=0, sticky="nsew")
         ttk.Button(log_frame, text="清除日志", command=self.clear_logs).grid(row=1, column=0, pady=(5, 0), sticky=tk.E)
 
-    def toggle_push_service(self, *args):
-        if self.push_enabled_var.get():
-            url = self.push_url_var.get()
-            if not url or not url.startswith(('http://', 'https://')):
-                self.log_message("启用推送失败：URL格式无效。")
-                self.push_status_label.config(text="状态: URL无效", foreground="red")
-                self.push_enabled_var.set(False)
-                return
-            self.push_status_label.config(text="状态: 已启用", foreground="blue")
-            self.log_message(f"Webhook 推送已启用，将推送至 {url}")
-        else:
-            self.push_status_label.config(text="状态: 已禁用", foreground="gray")
-            self.log_message("Webhook 推送已禁用。")
-
-    def send_push_notification(self):
-        url = self.push_url_var.get()
-        if not url:
+    def open_webhook_window(self):
+        if self.webhook_window and self.webhook_window.winfo_exists():
+            self.webhook_window.focus()
             return
-
-        payload = {
-            "heart_rate": self.heart_rate,
-            "connected": self.connected
-        }
-        
-        thread = threading.Thread(target=self._execute_push_request, args=(url, payload), daemon=True)
-        thread.start()
-
-    def _execute_push_request(self, url, payload):
-        try:
-            data = json.dumps(payload).encode('utf-8')
-            req = request.Request(url, data=data, headers={'Content-Type': 'application/json', 'User-Agent': 'HeartRateMonitor'})
-            
-            with request.urlopen(req, timeout=5) as response:
-                if 200 <= response.status < 300:
-                    def update_status_success():
-                        self.push_status_label.config(text=f"状态: 推送成功 (HTTP {response.status})", foreground="green")
-                    self.root.after(0, update_status_success)
-                else:
-                    def update_status_server_error():
-                        self.push_status_label.config(text=f"状态: 推送失败 (HTTP {response.status})", foreground="red")
-                        self.log_message(f"推送失败，服务器返回: {response.status} {response.reason}")
-                    self.root.after(0, update_status_server_error)
-
-        except error.HTTPError as e:
-            def update_status_http_error():
-                self.push_status_label.config(text=f"状态: 推送失败 (HTTP {e.code})", foreground="red")
-                self.log_message(f"HTTP推送错误: {e}")
-            self.root.after(0, update_status_http_error)
-        except error.URLError as e:
-            def update_status_url_error():
-                self.push_status_label.config(text="状态: 推送失败 (网络错误)", foreground="red")
-                self.log_message(f"URL推送错误: {e.reason}")
-            self.root.after(0, update_status_url_error)
-        except Exception as e:
-            def update_status_generic_error():
-                self.push_status_label.config(text="状态: 推送失败 (未知错误)", foreground="red")
-                self.log_message(f"推送时发生未知错误: {e}")
-            self.root.after(0, update_status_generic_error)
+        # [修改] 不再传递 save_settings 回调
+        self.webhook_window = WebhookWindow(self.root, self.webhook_manager)
 
     def choose_image(self):
         filepath = filedialog.askopenfilename(
@@ -309,8 +251,8 @@ class HeartRateMonitor:
                 self.heart_rate = heart_rate
                 self.heart_rate_label.config(text=f"心率: {heart_rate}")
 
-                if self.push_enabled_var.get():
-                    self.send_push_notification()
+                if heart_rate > 0:
+                    self.webhook_manager.send_all_enabled_webhooks(heart_rate)
                 
                 if heart_rate > 0:
                     self.heart_rate_label.config(fg="green")
@@ -349,6 +291,9 @@ class HeartRateMonitor:
             self.api_status_label.config(text="状态: 已禁用", foreground="gray")
 
     def save_settings(self):
+        # [修改] 不再保存 webhooks 到主 config
+        self.webhook_manager.save_webhooks() # 顺便也保存一下 webhook 的更改
+        
         geometry = self.floating_window.last_geometry
         if self.floating_window.is_open() and self.floating_window.window is not None:
             geometry = self.floating_window.window.geometry()
@@ -371,16 +316,14 @@ class HeartRateMonitor:
             "api_server": {
                 "enabled": self.api_server_enabled.get(),
                 "port": self.api_port_var.get()
-            },
-            "push_webhook": {
-                "enabled": self.push_enabled_var.get(),
-                "url": self.push_url_var.get()
             }
+            # Webhooks are no longer here
         }
         save_config(config)
         self.log_message("设置已保存到 config.json")
 
     def load_settings(self):
+        # [修改] 不再从主 config 加载 webhooks
         config = load_config()
         if not config:
             self.log_message("未找到配置文件，使用默认设置。")
@@ -433,14 +376,8 @@ class HeartRateMonitor:
             if api_settings.get("enabled", False):
                 self.root.after(100, lambda: self.api_server_enabled.set(True))
             self.log_message("已加载 API 服务器设置")
-
-        # [修改] 加载推送设置
-        push_settings = config.get("push_webhook")
-        if push_settings:
-            self.push_url_var.set(push_settings.get("url", "http://127.0.0.1:8001/heartrate"))
-            if push_settings.get("enabled", False):
-                self.root.after(100, lambda: self.push_enabled_var.set(True))
-            self.log_message("已加载 Webhook 推送设置")
+        
+        # Webhooks are no longer here
 
     def toggle_vrc_connection(self):
         if self.vrc_connected:
