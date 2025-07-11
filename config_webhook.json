@@ -1,0 +1,9 @@
+[
+    {
+        "enabled": false,
+        "name": "sleepy-project 同步心率",
+        "url": "https://wyf9-sleepy.hf.space/device/set",
+        "body": "{\n    \"id\": \"heart-rate-widget\",\n    \"show_name\": \"❤\",\n    \"using\": true,\n    \"app_name\": \"{bpm}\"\n}",
+        "headers": "{\n    \"Content-Type\": \"application/json\",\n    \"Sleepy-Secret\": \"wyf9test\"\n}"
+    }
+]
