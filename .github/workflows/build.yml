@@ -1,0 +1,37 @@
+name: Build HeartRateMonitor EXE
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # 手动触发也支持
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: 拉取仓库代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: 编译 EXE 文件
+        run: |
+          pyinstaller --onefile --console --name HeartRateMonitor main.py
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: HeartRateMonitor-exe
+          path: dist/HeartRateMonitor.exe
