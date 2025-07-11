@@ -1,9 +1,22 @@
 [
     {
         "enabled": false,
-        "name": "sleepy-project 同步心率",
+        "name": "sleepy-project 心率刷新时",
         "url": "http://改成你的ip/device/set",
+        "triggers": [
+            "heart_rate_updated"
+        ],
         "body": "{\n    \"id\": \"heart-rate-widget\",\n    \"show_name\": \"❤\",\n    \"using\": true,\n    \"app_name\": \"{bpm}\"\n}",
+        "headers": "{\n    \"Content-Type\": \"application/json\",\n    \"Sleepy-Secret\": \"改成你的秘钥\"\n}"
+    },
+    {
+        "enabled": false,
+        "name": "sleepy-project 断开时",
+        "url": "http://改成你的ip/device/set",
+        "triggers": [
+            "disconnected"
+        ],
+        "body": "{\n    \"id\": \"heart-rate-widget\",\n    \"show_name\": \"❤\",\n    \"using\": false,\n    \"app_name\": \"未在使用\"\n}",
         "headers": "{\n    \"Content-Type\": \"application/json\",\n    \"Sleepy-Secret\": \"改成你的秘钥\"\n}"
     }
 ]
