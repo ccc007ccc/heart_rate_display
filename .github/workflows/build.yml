@@ -28,7 +28,7 @@ jobs:
 
       - name: 编译 EXE 文件
         run: |
-          pyinstaller --onefile --windowed --name HeartRateMonitor main.py
+          pyinstaller --onefile --console --name HeartRateMonitor main.py
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
