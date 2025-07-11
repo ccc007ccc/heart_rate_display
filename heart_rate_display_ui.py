@@ -39,7 +39,6 @@ class HeartRateMonitor:
         
         self.heart_rate_queue = queue.Queue()
         
-        # [修改] 初始化 Webhook 管理器，它会自动加载配置
         self.webhook_manager = WebhookManager(self.log_message)
         self.webhook_window = None
         
@@ -48,7 +47,6 @@ class HeartRateMonitor:
         self.update_logs()
         self.update_heart_rate_display()
         
-        # [修改] load_settings 不再加载 webhooks
         self.load_settings()
 
     def setup_ui(self):
@@ -132,7 +130,7 @@ class HeartRateMonitor:
         self.api_status_label = ttk.Label(api_frame, text="状态: 已禁用", font=("Arial", 10), foreground="gray")
         self.api_status_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5,0))
 
-        webhook_frame = ttk.LabelFrame(middle_column_frame, text="Webhook 数据推送(测试中)", padding="10")
+        webhook_frame = ttk.LabelFrame(middle_column_frame, text="Webhook 数据推送", padding="10")
         webhook_frame.pack(fill="x", pady=PAD_Y)
         ttk.Button(webhook_frame, text="打开 Webhook 设置...", command=self.open_webhook_window).pack(fill="x")
         
@@ -186,7 +184,6 @@ class HeartRateMonitor:
         if self.webhook_window and self.webhook_window.winfo_exists():
             self.webhook_window.focus()
             return
-        # [修改] 不再传递 save_settings 回调
         self.webhook_window = WebhookWindow(self.root, self.webhook_manager)
 
     def choose_image(self):
@@ -252,7 +249,8 @@ class HeartRateMonitor:
                 self.heart_rate_label.config(text=f"心率: {heart_rate}")
 
                 if heart_rate > 0:
-                    self.webhook_manager.send_all_enabled_webhooks(heart_rate)
+                    # [修改] 使用新的事件触发方法
+                    self.webhook_manager.trigger_event("heart_rate_updated", heart_rate)
                 
                 if heart_rate > 0:
                     self.heart_rate_label.config(fg="green")
@@ -291,8 +289,7 @@ class HeartRateMonitor:
             self.api_status_label.config(text="状态: 已禁用", foreground="gray")
 
     def save_settings(self):
-        # [修改] 不再保存 webhooks 到主 config
-        self.webhook_manager.save_webhooks() # 顺便也保存一下 webhook 的更改
+        self.webhook_manager.save_webhooks() 
         
         geometry = self.floating_window.last_geometry
         if self.floating_window.is_open() and self.floating_window.window is not None:
@@ -317,13 +314,11 @@ class HeartRateMonitor:
                 "enabled": self.api_server_enabled.get(),
                 "port": self.api_port_var.get()
             }
-            # Webhooks are no longer here
         }
         save_config(config)
         self.log_message("设置已保存到 config.json")
 
     def load_settings(self):
-        # [修改] 不再从主 config 加载 webhooks
         config = load_config()
         if not config:
             self.log_message("未找到配置文件，使用默认设置。")
@@ -377,8 +372,6 @@ class HeartRateMonitor:
                 self.root.after(100, lambda: self.api_server_enabled.set(True))
             self.log_message("已加载 API 服务器设置")
         
-        # Webhooks are no longer here
-
     def toggle_vrc_connection(self):
         if self.vrc_connected:
             self.vrc_osc_client.disconnect()
@@ -595,11 +588,19 @@ class HeartRateMonitor:
         self.connected = True
         self.status_label.config(text="状态: 已连接", fg="green")
         self.log_message("设备连接成功，开始监控心率")
+        # [修改] 触发 "connected" 事件
+        self.webhook_manager.trigger_event("connected", self.heart_rate)
+
 
     def _on_disconnect(self):
+        # [修改] 先触发事件，再更新状态
+        if self.connected: # 只有在之前是连接状态时才触发
+            self.webhook_manager.trigger_event("disconnected", self.heart_rate)
+        
         self.connected = False
         self.status_label.config(text="状态: 未连接", fg="gray")
-        self.connect_button.config(state=tk.NORMAL)
+        if self.current_mac:
+            self.connect_button.config(state=tk.NORMAL)
         self.disconnect_button.config(state=tk.DISABLED)
         self.heart_rate_label.config(text="心率: --", fg="red")
         self.heart_rate_queue.put(0) 
@@ -608,7 +609,10 @@ class HeartRateMonitor:
     def disconnect_device(self):
         self.should_stop = True
         if self.ble_loop and not self.ble_loop.is_closed() and self.ble_loop.is_running():
-            self.ble_loop.call_soon_threadsafe(self.ble_loop.stop)
+            # 停止事件循环可能会导致正在运行的异步任务突然中断，
+            # 这里改为在循环内通过 should_stop 标志来优雅退出
+            # self.ble_loop.call_soon_threadsafe(self.ble_loop.stop)
+            pass
         self._on_disconnect()
         self.log_message("手动断开连接")
 

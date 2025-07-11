@@ -90,22 +90,51 @@ class WebhookManager:
             self.logger(msg)
             return False, msg
 
-    def send_all_enabled_webhooks(self, heart_rate: int):
-        """向所有启用的Webhook发送心率数据"""
+    def trigger_event(self, event_type: str, heart_rate: int = 0):
+        """
+        [新增] 根据事件类型触发匹配的 Webhook。
+        event_type: "connected", "disconnected", "heart_rate_updated"
+        """
+        event_map = {
+            "connected": "设备已连接",
+            "disconnected": "设备已断开",
+            "heart_rate_updated": f"心率刷新: {heart_rate}bpm"
+        }
+        self.logger(f"Webhook 事件触发: {event_map.get(event_type, event_type)}")
+        
         for config in self.webhooks:
-            if config.get("enabled", False):
-                thread = threading.Thread(target=self._send_request, args=(config, heart_rate), daemon=True)
+            if not config.get("enabled", False):
+                continue
+
+            # 兼容旧配置：如果没有triggers字段，则默认为仅心率更新时触发
+            triggers = config.get("triggers", ["heart_rate_updated"])
+            
+            if event_type in triggers:
+                # 使用占位符来动态替换事件描述
+                body_str = config.get("body", "{}")
+                body_str = body_str.replace("{event}", event_map.get(event_type, ""))
+
+                thread = threading.Thread(
+                    target=self._send_request,
+                    args=(config, heart_rate, False, body_str),
+                    daemon=True
+                )
                 thread.start()
 
     def test_webhook(self, config: Dict):
         """测试单个Webhook配置"""
         self.logger(f"正在测试 Webhook: {config.get('name')}")
         test_heart_rate = 88 
-        thread = threading.Thread(target=self._send_request, args=(config, test_heart_rate, True), daemon=True)
+        # 测试时，模拟心率更新事件
+        test_body = config.get("body", "{}").replace("{event}", f"心率刷新: {test_heart_rate}bpm")
+        thread = threading.Thread(target=self._send_request, args=(config, test_heart_rate, True, test_body), daemon=True)
         thread.start()
 
-    def _send_request(self, config: Dict, heart_rate: int, is_test: bool = False):
-        """执行HTTP请求的内部方法"""
+    def _send_request(self, config: Dict, heart_rate: int, is_test: bool = False, custom_body: Optional[str] = None):
+        """
+        执行HTTP请求的内部方法。
+        [修改] 增加了 custom_body 参数用于事件触发。
+        """
         def log_response(message):
             if is_test and self.response_logger:
                 self.response_logger(message)
@@ -113,7 +142,7 @@ class WebhookManager:
                 self.logger(message)
 
         try:
-            bpm_str = str(heart_rate)
+            bpm_str = str(heart_rate) if heart_rate > 0 else "N/A"
             
             url = config.get("url", "").replace("{bpm}", bpm_str)
             if not url.startswith(('http://', 'https://')):
@@ -121,7 +150,10 @@ class WebhookManager:
                 return
 
             headers_str = config.get("headers", "{}").replace("{bpm}", bpm_str)
-            body_str = config.get("body", "{}").replace("{bpm}", bpm_str)
+            # 如果提供了自定义body，就用它，否则用配置里的
+            body_str = custom_body if custom_body is not None else config.get("body", "{}")
+            body_str = body_str.replace("{bpm}", bpm_str)
+
 
             headers = json.loads(headers_str)
             if 'User-Agent' not in headers:
@@ -135,8 +167,9 @@ class WebhookManager:
 
             with request.urlopen(req, timeout=10) as response:
                 response_body = response.read().decode('utf-8', errors='ignore')
-                log_response(
-                    f"--- Webhook 测试响应 ---\n"
+                log_func = self.response_logger if is_test and self.response_logger else self.logger
+                log_func(
+                    f"--- Webhook {'测试' if is_test else ''}响应 ---\n"
                     f"名称: {config.get('name')}\n"
                     f"状态码: {response.status} {response.reason}\n"
                     f"响应体:\n{response_body}\n"
@@ -146,7 +179,7 @@ class WebhookManager:
             log_response(f"[{config.get('name')}] 发送失败: Headers 或 Body 的 JSON 格式错误: {e}")
         except error.HTTPError as e:
             log_response(
-                f"--- Webhook 测试响应 (HTTP错误) ---\n"
+                f"--- Webhook {'测试' if is_test else ''}响应 (HTTP错误) ---\n"
                 f"名称: {config.get('name')}\n"
                 f"状态码: {e.code} {e.reason}\n"
                 f"响应体:\n{e.read().decode('utf-8', errors='ignore') if e.fp else '无响应体'}\n"
