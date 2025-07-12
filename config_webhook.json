@@ -16,7 +16,7 @@
         "triggers": [
             "disconnected"
         ],
-        "body": "{\n    \"id\": \"heart-rate-widget\",\n    \"show_name\": \"❤\",\n    \"using\": false,\n    \"app_name\": \"{bpm}bpm\"\n}",
+        "body": "{\n    \"id\": \"heart-rate-widget\",\n    \"show_name\": \"♥️\",\n    \"using\": false,\n    \"app_name\": \"{bpm}bpm\"\n}",
         "headers": "{\n    \"Content-Type\": \"application/json\",\n    \"Sleepy-Secret\": \"改成你的秘钥\"\n}"
     }
 ]
