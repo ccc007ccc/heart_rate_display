@@ -15,6 +15,7 @@ from config import save_config, load_config
 from floating_window import FloatingWindow
 from vrc_osc import VrcOscClient
 from api_server import ApiServer
+from websocket_server import WebSocketServer # [新增] 导入WebSocket服务器
 from webhook_manager import WebhookManager
 from webhook_ui import WebhookWindow
 
@@ -30,6 +31,7 @@ class HeartRateMonitor:
         self.should_stop = False
         
         self.api_server = None
+        self.websocket_server = None # [新增] WebSocket服务器实例
         
         self.floating_window = FloatingWindow(self)
         
@@ -55,6 +57,10 @@ class HeartRateMonitor:
         self.root.geometry("860x540") 
         self.root.minsize(800, 500)
         self.root.resizable(True, True)
+        
+        # [新增] WebSocket UI变量
+        self.websocket_server_enabled = tk.BooleanVar(value=False)
+        self.websocket_port_var = tk.StringVar(value="8001")
         
         self.api_server_enabled = tk.BooleanVar(value=False)
         self.api_port_var = tk.StringVar(value="8000")
@@ -120,6 +126,17 @@ class HeartRateMonitor:
         self.vrc_status_label = ttk.Label(vrc_frame, text="状态: 未连接", font=("Arial", 10), foreground="gray")
         self.vrc_status_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(5,0))
         
+        # [新增] WebSocket 服务器 UI
+        websocket_frame = ttk.LabelFrame(middle_column_frame, text="WebSocket服务器 (实时推送)", padding="10")
+        websocket_frame.pack(fill="x", pady=PAD_Y)
+        websocket_frame.columnconfigure(1, weight=1)
+        self.websocket_server_enabled.trace_add("write", self.toggle_websocket_server)
+        ttk.Checkbutton(websocket_frame, text="启用WebSocket服务器", variable=self.websocket_server_enabled).grid(row=0, column=0, sticky=tk.W, columnspan=2)
+        ttk.Label(websocket_frame, text="端口:").grid(row=1, column=0, sticky=tk.W, pady=(5,0))
+        ttk.Entry(websocket_frame, textvariable=self.websocket_port_var, width=10).grid(row=1, column=1, sticky="ew", padx=5, pady=(5,0))
+        self.websocket_status_label = ttk.Label(websocket_frame, text="状态: 已禁用", font=("Arial", 10), foreground="gray")
+        self.websocket_status_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5,0))
+
         api_frame = ttk.LabelFrame(middle_column_frame, text="心率API服务器 (被动获取)", padding="10")
         api_frame.pack(fill="x", pady=PAD_Y)
         api_frame.columnconfigure(1, weight=1)
@@ -249,9 +266,12 @@ class HeartRateMonitor:
                 self.heart_rate_label.config(text=f"心率: {heart_rate}")
 
                 if heart_rate > 0:
-                    # [修改] 使用新的事件触发方法
                     self.webhook_manager.trigger_event("heart_rate_updated", heart_rate)
                 
+                # [修改] 增加WebSocket广播
+                if self.websocket_server:
+                    self.websocket_server.broadcast()
+
                 if heart_rate > 0:
                     self.heart_rate_label.config(fg="green")
                     if self.vrc_connected:
@@ -267,6 +287,29 @@ class HeartRateMonitor:
     def clear_logs(self):
         self.log_text.delete(1.0, tk.END)
 
+    # [新增] 启动/停止 WebSocket 服务器
+    def toggle_websocket_server(self, *args):
+        if self.websocket_server_enabled.get():
+            try:
+                port = int(self.websocket_port_var.get())
+                self.websocket_server = WebSocketServer(self, port, self.log_message)
+                self.websocket_server.start()
+                self.websocket_status_label.config(text=f"状态: 运行于 ws://127.0.0.1:{port}", foreground="green")
+            except ValueError:
+                self.log_message("WebSocket服务器启动失败：端口号必须是有效的数字。")
+                self.websocket_status_label.config(text="状态: 端口号无效", foreground="red")
+                self.websocket_server_enabled.set(False)
+            except Exception as e:
+                self.log_message(f"WebSocket服务器启动失败: {e}")
+                self.websocket_status_label.config(text=f"状态: 启动失败", foreground="red")
+                self.websocket_server_enabled.set(False)
+
+        else:
+            if self.websocket_server:
+                self.websocket_server.stop()
+                self.websocket_server = None
+            self.websocket_status_label.config(text="状态: 已禁用", foreground="gray")
+            
     def toggle_api_server(self, *args):
         if self.api_server_enabled.get():
             try:
@@ -313,6 +356,11 @@ class HeartRateMonitor:
             "api_server": {
                 "enabled": self.api_server_enabled.get(),
                 "port": self.api_port_var.get()
+            },
+            # [新增] 保存 WebSocket 设置
+            "websocket_server": {
+                "enabled": self.websocket_server_enabled.get(),
+                "port": self.websocket_port_var.get()
             }
         }
         save_config(config)
@@ -367,10 +415,19 @@ class HeartRateMonitor:
 
         api_settings = config.get("api_server")
         if api_settings:
-            self.api_port_var.set(api_settings.get("port", "8080"))
+            self.api_port_var.set(api_settings.get("port", "8000"))
             if api_settings.get("enabled", False):
                 self.root.after(100, lambda: self.api_server_enabled.set(True))
             self.log_message("已加载 API 服务器设置")
+
+        # [新增] 加载 WebSocket 设置
+        websocket_settings = config.get("websocket_server")
+        if websocket_settings:
+            self.websocket_port_var.set(websocket_settings.get("port", "8001"))
+            if websocket_settings.get("enabled", False):
+                # 延迟执行，确保UI完全加载
+                self.root.after(200, lambda: self.websocket_server_enabled.set(True))
+            self.log_message("已加载 WebSocket 服务器设置")
         
     def toggle_vrc_connection(self):
         if self.vrc_connected:
@@ -433,8 +490,11 @@ class HeartRateMonitor:
             self.disconnect_device()
         if self.vrc_connected:
             self.vrc_osc_client.disconnect()
-        if self.api_server and self.api_server.httpd:
+        # [修改] 增加停止服务器的逻辑
+        if self.api_server:
             self.api_server.stop()
+        if self.websocket_server:
+            self.websocket_server.stop()
         if self.floating_window.is_open():
             self.floating_window.close_window()
         self.root.destroy()
@@ -588,13 +648,14 @@ class HeartRateMonitor:
         self.connected = True
         self.status_label.config(text="状态: 已连接", fg="green")
         self.log_message("设备连接成功，开始监控心率")
-        # [修改] 触发 "connected" 事件
         self.webhook_manager.trigger_event("connected", self.heart_rate)
+        # [新增] 连接时广播状态
+        if self.websocket_server:
+            self.websocket_server.broadcast()
 
 
     def _on_disconnect(self):
-        # [修改] 先触发事件，再更新状态
-        if self.connected: # 只有在之前是连接状态时才触发
+        if self.connected: 
             self.webhook_manager.trigger_event("disconnected", self.heart_rate)
         
         self.connected = False
@@ -605,13 +666,13 @@ class HeartRateMonitor:
         self.heart_rate_label.config(text="心率: --", fg="red")
         self.heart_rate_queue.put(0) 
         self.log_message("设备已断开连接")
+        # [新增] 断开时广播状态
+        if self.websocket_server:
+            self.websocket_server.broadcast()
 
     def disconnect_device(self):
         self.should_stop = True
         if self.ble_loop and not self.ble_loop.is_closed() and self.ble_loop.is_running():
-            # 停止事件循环可能会导致正在运行的异步任务突然中断，
-            # 这里改为在循环内通过 should_stop 标志来优雅退出
-            # self.ble_loop.call_soon_threadsafe(self.ble_loop.stop)
             pass
         self._on_disconnect()
         self.log_message("手动断开连接")

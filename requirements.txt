@@ -2,3 +2,4 @@ bleak
 python-osc
 Flask
 pillow
+websockets
